@@ -1,13 +1,13 @@
-export class ZenGentError extends Error {
+export class ZengentError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = new.target.name;
   }
 }
 
-export class ValidationError extends ZenGentError {}
-export class ConfigError extends ZenGentError {}
-export class AgentExecutionError extends ZenGentError {}
-export class ToolExecutionError extends ZenGentError {}
-export class WorkflowExecutionError extends ZenGentError {}
-export class TimeoutError extends ZenGentError {}
+export class ValidationError extends ZengentError {}
+export class ConfigError extends ZengentError {}
+export class AgentExecutionError extends ZengentError {}
+export class ToolExecutionError extends ZengentError {}
+export class WorkflowExecutionError extends ZengentError {}
+export class TimeoutError extends ZengentError {}

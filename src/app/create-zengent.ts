@@ -36,7 +36,7 @@ export interface ZengentRunOptions extends RunContextOptions {
   threadId?: string;
 }
 
-// App-level runtime only. A ZenGent app owns global state and executes one main workflow.
+// App-level runtime only. A zengent app owns global state and executes one main workflow.
 export class ZengentApp<TMainWorkflow extends AnyMainWorkflow | undefined = undefined> {
   private memoryStore?: MemoryStore;
   private readonly eventHandlers: EventHandler[] = [];

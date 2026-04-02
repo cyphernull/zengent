@@ -231,7 +231,7 @@ export interface MainWorkflow<
   TAgents extends readonly AnyAgent[],
   TPausedState = PauseState<TSteps>,
 > extends WorkflowWithResources<TInput, TSteps, TTools, TAgents, TPausedState> {
-  // Sole top-level workflow for a ZenGent app.
+  // Sole top-level workflow for a zengent app.
   commit(): MainWorkflow<TInput, TSteps, TTools, TAgents, TPausedState>;
   step<const TName extends string, TOutput>(
     name: TName,
