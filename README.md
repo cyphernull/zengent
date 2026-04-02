@@ -1,6 +1,6 @@
-# ZenGent
+# zengent
 
-ZenGent is a lightweight TypeScript-first agent framework organized around one app, one main workflow, and explicit execution boundaries.
+zengent is a lightweight TypeScript-first agent framework organized around one app, one main workflow, and explicit execution boundaries.
 
 It is designed to stay small, composable, and predictable:
 
@@ -62,7 +62,7 @@ const result = await app.run({ city: "Tokyo" }, { threadId: "trip-1" });
 
 ## Mental Model
 
-ZenGent is built around one execution spine, not several competing runtime centers.
+zengent is built around one execution spine, not several competing runtime centers.
 
 - `app`: the application entry and app-level state container
 - `mainWorkflow`: the single top-level execution path
@@ -71,7 +71,7 @@ ZenGent is built around one execution spine, not several competing runtime cente
 - `tool`: an external capability unit
 - `model adapter`: the model integration layer used by agents
 
-That separation is intentional. ZenGent avoids designs where the app, multiple top-level workflows, routers, and free-floating agents all compete as architectural entry points. The workflow owns orchestration. Agents serve workflow steps instead of becoming the architecture themselves.
+That separation is intentional. zengent avoids designs where the app, multiple top-level workflows, routers, and free-floating agents all compete as architectural entry points. The workflow owns orchestration. Agents serve workflow steps instead of becoming the architecture themselves.
 
 - One app
 - One required `mainWorkflow`

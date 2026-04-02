@@ -194,7 +194,7 @@ describe("adapters", () => {
           model: "openai/gpt-4.1",
           apiKey: "router-key",
           referer: "https://zengent.dev",
-          title: "ZenGent",
+          title: "zengent",
           fetch: createFetchStub(
             {
               choices: [
@@ -321,7 +321,7 @@ describe("adapters", () => {
                 model: "openai/gpt-4.1",
                 apiKey: "router-key",
                 referer: "https://zengent.dev",
-                title: "ZenGent",
+                title: "zengent",
                 fetch: createFetchStub(
                   {
                     choices: [
