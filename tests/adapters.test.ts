@@ -52,6 +52,13 @@ function jsonResponse(payload: unknown, init?: ResponseInit) {
   });
 }
 
+function textResponse(body: string, init?: ResponseInit) {
+  return new Response(body, {
+    status: 200,
+    ...init,
+  });
+}
+
 function createFetchStub(
   payload: unknown,
   capture: FetchCall[],
@@ -66,8 +73,32 @@ function createFetchStub(
   };
 }
 
+function createTextFetchStub(
+  body: string,
+  capture: FetchCall[],
+  init?: ResponseInit
+): typeof fetch {
+  return async (input, requestInit) => {
+    capture.push({
+      url: String(input),
+      init: requestInit ?? {},
+    });
+    return textResponse(body, init);
+  };
+}
+
 function getJsonBody(call: FetchCall) {
   return JSON.parse(String(call.init.body ?? "{}"));
+}
+
+async function collectStreamChunks(stream: AsyncIterable<string>) {
+  const chunks: string[] = [];
+
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+
+  return chunks;
 }
 
 async function exerciseAdapter(adapter: {
@@ -1173,6 +1204,154 @@ describe("adapters", () => {
         ).rejects.toThrow(config.expected);
       });
     }
+  });
+
+  it("streams Anthropic responses natively", async () => {
+    const calls: FetchCall[] = [];
+    const adapter = anthropicAdapter({
+      model: "claude-test",
+      apiKey: "anthropic-key",
+      fetch: createTextFetchStub(
+        [
+          'event: message_start',
+          'data: {"type":"message_start","message":{"usage":{"input_tokens":5}}}',
+          "",
+          'event: content_block_start',
+          'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+          "",
+          'event: content_block_delta',
+          'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}',
+          "",
+          'event: content_block_delta',
+          'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lo"}}',
+          "",
+          'event: message_delta',
+          'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}',
+          "",
+          'event: message_stop',
+          'data: {"type":"message_stop"}',
+          "",
+        ].join("\n"),
+        calls,
+        {
+          headers: {
+            "content-type": "text/event-stream",
+          },
+        }
+      ),
+    });
+
+    const stream = adapter.streamGenerate!(
+      {
+        messages: [{ role: "user", content: "Hello" }],
+      },
+      createRunContext()
+    );
+    const chunks = await collectStreamChunks(stream);
+    const result = await stream.result;
+
+    expect(chunks).toEqual(["Hel", "lo"]);
+    expect(result.text).toBe("Hello");
+    expect(result.usage).toEqual({
+      inputTokens: 5,
+      outputTokens: 2,
+      totalTokens: 7,
+    });
+    expect(getJsonBody(calls[0]!).stream).toBe(true);
+  });
+
+  it("streams Gemini responses natively", async () => {
+    const calls: FetchCall[] = [];
+    const adapter = geminiAdapter({
+      model: "gemini-test",
+      apiKey: "gemini-key",
+      fetch: createTextFetchStub(
+        [
+          'data: {"candidates":[{"content":{"parts":[{"text":"Hel"}]}}]}',
+          "",
+          'data: {"candidates":[{"content":{"parts":[{"text":"lo"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}',
+          "",
+        ].join("\n"),
+        calls,
+        {
+          headers: {
+            "content-type": "text/event-stream",
+          },
+        }
+      ),
+    });
+
+    const stream = adapter.streamGenerate!(
+      {
+        messages: [{ role: "user", content: "Hello" }],
+      },
+      createRunContext()
+    );
+    const chunks = await collectStreamChunks(stream);
+    const result = await stream.result;
+
+    expect(chunks).toEqual(["Hel", "lo"]);
+    expect(result.text).toBe("Hello");
+    expect(result.usage).toEqual({
+      inputTokens: 1,
+      outputTokens: 2,
+      totalTokens: 3,
+    });
+    expect(calls[0]!.url).toContain(":streamGenerateContent");
+    expect(calls[0]!.url).toContain("alt=sse");
+  });
+
+  it("streams Ollama responses natively", async () => {
+    const calls: FetchCall[] = [];
+    const adapter = ollamaAdapter({
+      model: "llama-test",
+      fetch: createTextFetchStub(
+        [
+          JSON.stringify({
+            message: {
+              content: "Hel",
+            },
+            done: false,
+          }),
+          JSON.stringify({
+            message: {
+              content: "lo",
+            },
+            done: false,
+          }),
+          JSON.stringify({
+            done: true,
+            done_reason: "stop",
+            prompt_eval_count: 1,
+            eval_count: 2,
+          }),
+        ].join("\n"),
+        calls,
+        {
+          headers: {
+            "content-type": "application/x-ndjson",
+          },
+        }
+      ),
+    });
+
+    const stream = adapter.streamGenerate!(
+      {
+        messages: [{ role: "user", content: "Hello" }],
+      },
+      createRunContext()
+    );
+    const chunks = await collectStreamChunks(stream);
+    const result = await stream.result;
+
+    expect(chunks).toEqual(["Hel", "lo"]);
+    expect(result.text).toBe("Hello");
+    expect(result.usage).toEqual({
+      inputTokens: 1,
+      outputTokens: 2,
+      totalTokens: 3,
+    });
+    expect(getJsonBody(calls[0]!).stream).toBe(true);
   });
 
   it("runs through createAgent with every first-party provider adapter", async () => {

@@ -1,8 +1,8 @@
 import {
   appendStructuredOutputHint,
+  createAnthropicStream,
   createModelAdapter,
   requireApiKey,
-  streamGenerateFromGenerate,
 } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor, ToolCall } from "../core/types.js";
 
@@ -288,11 +288,70 @@ export function anthropicAdapter(
       request: ModelRequest<TOutput>,
       context: RunContext
     ) {
-      return streamGenerateFromGenerate(
-        generate,
-        request,
-        context
+      const fetchImpl = config.fetch ?? globalThis.fetch;
+
+      if (!fetchImpl) {
+        throw new Error("No fetch implementation is available for the Anthropic adapter.");
+      }
+
+      const apiKey = requireApiKey("Anthropic", config.apiKey, "ANTHROPIC_API_KEY");
+
+      const responsePromise = fetchImpl(
+        `${config.baseUrl ?? "https://api.anthropic.com"}/v1/messages`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "anthropic-version": config.version ?? "2023-06-01",
+            "x-api-key": apiKey,
+            ...config.headers,
+          },
+          signal: request.signal ?? context.signal,
+          body: JSON.stringify({
+            model: config.model,
+            stream: true,
+            max_tokens: config.maxTokens ?? 1024,
+            ...(combineSystemText(request)
+              ? {
+                  system: combineSystemText(request),
+                }
+              : {}),
+            messages: toAnthropicMessages(request.messages),
+            ...(request.tools
+              ? {
+                  tools: request.tools.map((tool: ToolDescriptor) => ({
+                    name: tool.name,
+                    description: tool.description,
+                    input_schema: toAnthropicToolSchema(tool.inputSchema),
+                  })),
+                }
+              : {}),
+          }),
+        }
+      ).then((response) => {
+        if (!response.ok) {
+          throw new Error(
+            `Anthropic adapter failed with ${response.status} ${response.statusText}.`
+          );
+        }
+
+        return response;
+      });
+      const streamPromise = responsePromise.then((response) =>
+        createAnthropicStream<TOutput>(response)
       );
+      const textStream = (async function* () {
+        const stream = await streamPromise;
+        yield* stream;
+      })();
+
+      return {
+        result: streamPromise.then((stream) => stream.result),
+        textStream,
+        async *[Symbol.asyncIterator]() {
+          yield* textStream;
+        },
+      };
     },
   });
 }

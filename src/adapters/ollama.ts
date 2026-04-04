@@ -1,7 +1,7 @@
 import {
   createModelAdapter,
   createOllamaFormat,
-  streamGenerateFromGenerate,
+  createOllamaStream,
 } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor } from "../core/types.js";
 
@@ -186,7 +186,71 @@ export function ollamaAdapter(
       request: ModelRequest<TOutput>,
       context: RunContext
     ) {
-      return streamGenerateFromGenerate(generate, request, context);
+      const fetchImpl = config.fetch ?? globalThis.fetch;
+
+      if (!fetchImpl) {
+        throw new Error("No fetch implementation is available for the Ollama adapter.");
+      }
+
+      const responsePromise = fetchImpl(
+        `${config.baseUrl ?? "http://127.0.0.1:11434"}/api/chat`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...config.headers,
+          },
+          signal: request.signal ?? context.signal,
+          body: JSON.stringify({
+            model: config.model,
+            stream: true,
+            messages: toOllamaMessages(request),
+            ...(request.tools
+              ? {
+                  tools: request.tools.map((tool: ToolDescriptor) => ({
+                    type: "function",
+                    function: {
+                      name: tool.name,
+                      description: tool.description,
+                      parameters: toToolSchema(tool.inputSchema),
+                    },
+                  })),
+                }
+              : {}),
+            ...(createOllamaFormat(request)
+              ? {
+                  format: createOllamaFormat(request),
+                }
+              : {}),
+            ...(config.keepAlive !== undefined
+              ? {
+                  keep_alive: config.keepAlive,
+                }
+              : {}),
+          }),
+        }
+      ).then((response) => {
+        if (!response.ok) {
+          throw new Error(`Ollama adapter failed with ${response.status} ${response.statusText}.`);
+        }
+
+        return response;
+      });
+      const streamPromise = responsePromise.then((response) =>
+        createOllamaStream<TOutput>(response)
+      );
+      const textStream = (async function* () {
+        const stream = await streamPromise;
+        yield* stream;
+      })();
+
+      return {
+        result: streamPromise.then((stream) => stream.result),
+        textStream,
+        async *[Symbol.asyncIterator]() {
+          yield* textStream;
+        },
+      };
     },
   });
 }

@@ -1,8 +1,8 @@
 import {
+  createGeminiStream,
   createGeminiGenerationConfig,
   createModelAdapter,
   requireApiKey,
-  streamGenerateFromGenerate,
 } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolCall } from "../core/types.js";
 
@@ -302,7 +302,78 @@ export function geminiAdapter(
       request: ModelRequest<TOutput>,
       context: RunContext
     ) {
-      return streamGenerateFromGenerate(generate, request, context);
+      const fetchImpl = config.fetch ?? globalThis.fetch;
+
+      if (!fetchImpl) {
+        throw new Error("No fetch implementation is available for the Gemini adapter.");
+      }
+
+      const apiKey = requireApiKey(
+        "Gemini",
+        config.apiKey,
+        "GOOGLE_GENERATIVE_AI_API_KEY"
+      );
+
+      const url = new URL(
+        `${config.baseUrl ?? "https://generativelanguage.googleapis.com"}/${config.apiVersion ?? "v1beta"}/models/${config.model}:streamGenerateContent`
+      );
+
+      url.searchParams.set("alt", "sse");
+      url.searchParams.set("key", apiKey);
+
+      const responsePromise = fetchImpl(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...config.headers,
+        },
+        signal: request.signal ?? context.signal,
+        body: JSON.stringify({
+          ...(combineSystemInstruction(request)
+            ? {
+                system_instruction: combineSystemInstruction(request),
+              }
+            : {}),
+          contents: toGeminiContents(request.messages),
+          ...(toGeminiToolDeclarations(request)
+            ? {
+                tools: toGeminiToolDeclarations(request),
+              }
+            : {}),
+          ...(createGeminiGenerationConfig(request, {
+            maxOutputTokens: config.maxOutputTokens,
+          })
+            ? {
+                generationConfig: createGeminiGenerationConfig(request, {
+                  maxOutputTokens: config.maxOutputTokens,
+                }),
+              }
+            : {}),
+        }),
+      }).then((response) => {
+        if (!response.ok) {
+          throw new Error(
+            `Gemini adapter failed with ${response.status} ${response.statusText}.`
+          );
+        }
+
+        return response;
+      });
+      const streamPromise = responsePromise.then((response) =>
+        createGeminiStream<TOutput>(response)
+      );
+      const textStream = (async function* () {
+        const stream = await streamPromise;
+        yield* stream;
+      })();
+
+      return {
+        result: streamPromise.then((stream) => stream.result),
+        textStream,
+        async *[Symbol.asyncIterator]() {
+          yield* textStream;
+        },
+      };
     },
   });
 }
