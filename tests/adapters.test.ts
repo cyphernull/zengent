@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { describe, expect, it } from "vitest";
 
 import { aiSdkAdapter, type AISDKLikeModel } from "../src/adapters/ai-sdk.js";
@@ -785,6 +786,8 @@ describe("adapters", () => {
     for (const model of adapters) {
       const agent = createAgent({
         name: model.name,
+        inputSchema: z.string(),
+        outputSchema: z.string(),
         model,
       });
       const result = await agent.run("Hello");

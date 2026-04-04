@@ -5,7 +5,7 @@ export * from "./core/events.js";
 export * from "./core/result.js";
 export * from "./tool/index.js";
 export * from "./agent/index.js";
-export * from "./workflow/index.js";
+export * from "./flow/index.js";
 export * from "./memory/index.js";
 export * from "./adapters/index.js";
 export * from "./app/index.js";

@@ -1,12 +1,11 @@
 import { createRunContext } from "../core/context.js";
 import type { RunStream, RunResult } from "../core/result.js";
-import type { EventHandler, Message, ModelAdapter, RunContext, RunContextOptions, SchemaLike } from "../core/types.js";
+import { ValidationError } from "../core/errors.js";
+import type { EventHandler, ModelAdapter, RunContext, RunContextOptions, SchemaLike, InferSchema } from "../core/types.js";
 import type { MemoryStore } from "../memory/memory-store.js";
 import type { ToolDefinition } from "../tool/tool-types.js";
 import { executeAgentRun } from "./agent-runner.js";
 import type { StopPolicy } from "./stop-policy.js";
-
-export type AgentInput = string | Message[];
 
 export interface ToolPolicy {
   retries?: number;
@@ -19,40 +18,45 @@ export interface AgentRunOptions extends RunContextOptions {
   threadId?: string;
 }
 
-type AgentOutputFromSchema<TSchema> = TSchema extends SchemaLike<infer TOutput>
-  ? TOutput
-  : string;
-
 export interface CreateAgentOptions<
   TName extends string = string,
+  TInputSchema extends SchemaLike = SchemaLike,
+  TOutputSchema extends SchemaLike = SchemaLike,
   TTools extends readonly ToolDefinition[] = readonly ToolDefinition[],
-  TOutputSchema extends SchemaLike | undefined = undefined,
 > {
   name: TName;
+  inputSchema: TInputSchema;
+  outputSchema: TOutputSchema;
   instructions?: string;
   model: ModelAdapter;
   tools?: TTools;
-  output?: TOutputSchema;
   stopPolicy?: Partial<StopPolicy>;
   toolPolicy?: ToolPolicy;
   memory?: MemoryStore;
 }
 
 export interface Agent<
-  TOutput = string,
+  TInput = unknown,
+  TOutput = unknown,
   TTools extends readonly ToolDefinition[] = readonly ToolDefinition[],
   TName extends string = string,
 > {
-  // Reasoning unit used by workflow steps.
+  // Reasoning unit used by flows.
   readonly name: TName;
+  readonly inputSchema: SchemaLike<TInput>;
+  readonly outputSchema: SchemaLike<TOutput>;
   readonly instructions?: string;
   readonly model: ModelAdapter;
   readonly tools: TTools;
-  run(input: AgentInput, options?: AgentRunOptions): Promise<RunResult<TOutput>>;
-  stream(input: AgentInput, options?: AgentRunOptions): RunStream<TOutput>;
+  run(input: TInput, options?: AgentRunOptions): Promise<RunResult<TOutput>>;
+  stream(input: TInput, options?: AgentRunOptions): RunStream<TOutput>;
 }
 
-export type AgentOutput<TAgent> = TAgent extends Agent<infer TOutput, any, any>
+export type AgentInput<TAgent> = TAgent extends Agent<infer TInput, any, any, any>
+  ? TInput
+  : never;
+
+export type AgentOutput<TAgent> = TAgent extends Agent<any, infer TOutput, any, any>
   ? TOutput
   : never;
 
@@ -139,30 +143,48 @@ function buildContext(options?: AgentRunOptions): RunContext {
 
 export function createAgent<
   const TName extends string,
+  TInputSchema extends SchemaLike,
+  TOutputSchema extends SchemaLike,
   const TTools extends readonly ToolDefinition[] = readonly ToolDefinition[],
-  TOutputSchema extends SchemaLike | undefined = undefined,
 >(
-  options: CreateAgentOptions<TName, TTools, TOutputSchema>
-): Agent<AgentOutputFromSchema<TOutputSchema>, TTools, TName> {
+  options: CreateAgentOptions<TName, TInputSchema, TOutputSchema, TTools>
+): Agent<InferSchema<TInputSchema>, InferSchema<TOutputSchema>, TTools, TName> {
   const tools = (options.tools ?? []) as TTools;
 
   return {
     name: options.name,
+    inputSchema: options.inputSchema as SchemaLike<InferSchema<TInputSchema>>,
+    outputSchema: options.outputSchema as SchemaLike<InferSchema<TOutputSchema>>,
     instructions: options.instructions,
     model: options.model,
     tools,
     async run(input, runOptions) {
       const context = buildContext(runOptions);
+      let parsedInput: InferSchema<TInputSchema>;
 
-      return executeAgentRun<AgentOutputFromSchema<TOutputSchema>>({
+      try {
+        parsedInput = options.inputSchema.parse(input) as InferSchema<TInputSchema>;
+      } catch (error) {
+        return {
+          status: "failed",
+          error: new ValidationError(`Invalid input for agent "${options.name}".`, {
+            cause: error,
+          }),
+          steps: [],
+          toolTraces: [],
+          messages: [],
+        };
+      }
+
+      return executeAgentRun<InferSchema<TOutputSchema>>({
         name: options.name,
         instructions: options.instructions,
         model: options.model,
         tools,
-        output: options.output as SchemaLike<AgentOutputFromSchema<TOutputSchema>> | undefined,
+        outputSchema: options.outputSchema as SchemaLike<InferSchema<TOutputSchema>>,
         stopPolicy: options.stopPolicy,
         toolPolicy: options.toolPolicy,
-        input,
+        input: parsedInput,
         context,
         memory: options.memory,
         runOptions,
@@ -176,16 +198,39 @@ export function createAgent<
           queue.push(event);
         }),
       });
+      let parsedInput: InferSchema<TInputSchema>;
 
-      const result = executeAgentRun<AgentOutputFromSchema<TOutputSchema>>({
+      try {
+        parsedInput = options.inputSchema.parse(input) as InferSchema<TInputSchema>;
+      } catch (error) {
+        const failed = Promise.resolve({
+          status: "failed" as const,
+          error: new ValidationError(`Invalid input for agent "${options.name}".`, {
+            cause: error,
+          }),
+          steps: [],
+          toolTraces: [],
+          messages: [],
+        });
+        queue.finish();
+
+        return {
+          result: failed,
+          [Symbol.asyncIterator]() {
+            return queue.stream();
+          },
+        };
+      }
+
+      const result = executeAgentRun<InferSchema<TOutputSchema>>({
         name: options.name,
         instructions: options.instructions,
         model: options.model,
         tools,
-        output: options.output as SchemaLike<AgentOutputFromSchema<TOutputSchema>> | undefined,
+        outputSchema: options.outputSchema as SchemaLike<InferSchema<TOutputSchema>>,
         stopPolicy: options.stopPolicy,
         toolPolicy: options.toolPolicy,
-        input,
+        input: parsedInput,
         context,
         memory: options.memory,
         runOptions: {

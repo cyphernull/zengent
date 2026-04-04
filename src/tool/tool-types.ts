@@ -8,9 +8,9 @@ export interface ToolDefinition<
   readonly kind: "tool";
   readonly name: TName;
   readonly description: string;
-  readonly input: TInputSchema;
-  readonly inputSchema?: JsonSchema;
-  readonly output?: SchemaLike<TOutput>;
+  readonly inputSchema: TInputSchema;
+  readonly jsonSchema?: JsonSchema;
+  readonly outputSchema: SchemaLike<TOutput>;
   execute(
     input: InferSchema<TInputSchema>,
     context: RunContext

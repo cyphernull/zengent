@@ -9,7 +9,8 @@ export function createFakeTool<TOutput>(
   return defineTool({
     name,
     description: `Fake tool ${name}`,
-    input: z.object({ value: z.string().optional() }),
+    inputSchema: z.object({ value: z.string().optional() }),
+    outputSchema: z.any(),
     execute: async () => output,
   });
 }

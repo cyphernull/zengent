@@ -1,7 +1,7 @@
 {
   "name": "zengent",
   "version": "0.1.0",
-  "description": "A lightweight TypeScript-first agent framework for tools, agents, and workflows.",
+  "description": "A lightweight TypeScript-first agent framework for tools, agents, and flows.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -24,9 +24,9 @@
       "types": "./dist/agent/index.d.ts",
       "import": "./dist/agent/index.js"
     },
-    "./workflow": {
-      "types": "./dist/workflow/index.d.ts",
-      "import": "./dist/workflow/index.js"
+    "./flow": {
+      "types": "./dist/flow/index.d.ts",
+      "import": "./dist/flow/index.js"
     },
     "./tool": {
       "types": "./dist/tool/index.d.ts",
@@ -89,7 +89,7 @@
   },
   "keywords": [
     "agent",
-    "workflow",
+    "flow",
     "typescript",
     "llm",
     "tools",

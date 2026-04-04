@@ -23,12 +23,13 @@ export function createMcpTool(options: {
   return defineTool({
     name: options.name,
     description: options.description,
-    input: mcpInputSchema,
-    inputSchema: options.inputSchema,
+    inputSchema: mcpInputSchema,
+    jsonSchema: options.inputSchema,
+    outputSchema: z.unknown(),
     execute: async (input) => {
       const result = await options.client.callTool({
         name: options.name,
-        arguments: input,
+        arguments: input as Record<string, unknown>,
       });
 
       return result.content;

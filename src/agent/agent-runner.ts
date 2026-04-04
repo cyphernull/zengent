@@ -5,28 +5,45 @@ import type { MemoryStore } from "../memory/memory-store.js";
 import type { ToolDefinition } from "../tool/tool-types.js";
 import { createStopPolicy, type StopPolicy } from "./stop-policy.js";
 import { parseStructuredOutput } from "./structured-output.js";
-import type { AgentInput, AgentRunOptions, ToolPolicy } from "./create-agent.js";
+import type { AgentRunOptions, ToolPolicy } from "./create-agent.js";
 
 interface ExecuteAgentRunOptions<TOutput> {
   name: string;
   instructions?: string;
   model: ModelAdapter;
   tools: readonly ToolDefinition[];
-  output?: SchemaLike<TOutput>;
+  outputSchema: SchemaLike<TOutput>;
   stopPolicy?: Partial<StopPolicy>;
   toolPolicy?: ToolPolicy;
-  input: AgentInput;
+  input: unknown;
   context: RunContext;
   memory?: MemoryStore;
   runOptions?: AgentRunOptions;
 }
 
-function toMessages(input: AgentInput): Message[] {
+function isMessageArray(input: unknown): input is Message[] {
+  return (
+    Array.isArray(input) &&
+    input.every(
+      (value) =>
+        typeof value === "object" &&
+        value !== null &&
+        "role" in value &&
+        "content" in value
+    )
+  );
+}
+
+function toMessages(input: unknown): Message[] {
   if (typeof input === "string") {
     return [{ role: "user", content: input }];
   }
 
-  return [...input];
+  if (isMessageArray(input)) {
+    return [...input];
+  }
+
+  return [{ role: "user", content: stringifyPayload(input) }];
 }
 
 function stringifyPayload(value: unknown): string {
@@ -151,6 +168,26 @@ function finalizeResult<TOutput>(
   };
 }
 
+function resolveAgentOutput<TOutput>(
+  response: ModelResponse<TOutput>,
+  finalText: string | undefined,
+  outputSchema: SchemaLike<TOutput>
+): TOutput {
+  if (response.output !== undefined) {
+    return outputSchema.parse(response.output);
+  }
+
+  if (finalText === undefined) {
+    throw new AgentExecutionError("Model output is missing.");
+  }
+
+  try {
+    return outputSchema.parse(finalText);
+  } catch {
+    return parseStructuredOutput(finalText, outputSchema) as TOutput;
+  }
+}
+
 export async function executeAgentRun<TOutput>(
   options: ExecuteAgentRunOptions<TOutput>
 ): Promise<RunResult<TOutput>> {
@@ -192,9 +229,9 @@ export async function executeAgentRun<TOutput>(
           tools: options.tools.map((tool) => ({
             name: tool.name,
             description: tool.description,
-            inputSchema: tool.inputSchema,
+            inputSchema: tool.jsonSchema,
           })),
-          outputSchema: options.output,
+          outputSchema: options.outputSchema,
           signal: options.context.signal,
           metadata: options.context.metadata,
         },
@@ -274,10 +311,7 @@ export async function executeAgentRun<TOutput>(
         );
       }
 
-      const output =
-        response.output !== undefined && options.output
-          ? options.output.parse(response.output)
-          : (parseStructuredOutput(finalText ?? "", options.output) as TOutput);
+      const output = resolveAgentOutput(response, finalText, options.outputSchema);
 
       if (finalText) {
         messages.push({
