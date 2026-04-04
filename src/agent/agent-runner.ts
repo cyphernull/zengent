@@ -22,6 +22,7 @@ interface ExecuteAgentRunOptions<TInput, TOutput> {
   context: RunContext;
   memory?: MemoryStore;
   runOptions?: AgentRunOptions;
+  onTextChunk?: (chunk: string) => void | Promise<void>;
 }
 
 function isMessageArray(input: unknown): input is Message[] {
@@ -168,6 +169,53 @@ async function executeTool(
   );
 }
 
+async function generateModelResponse<TOutput>(
+  model: ModelAdapter,
+  request: {
+    instructions?: string;
+    messages: Message[];
+    tools: Array<{
+      name: string;
+      description: string;
+      inputSchema: JsonSchema;
+    }>;
+    outputSchema: SchemaLike<TOutput>;
+    signal?: AbortSignal;
+    metadata?: Record<string, unknown>;
+  },
+  context: RunContext,
+  onTextChunk?: (chunk: string) => void | Promise<void>
+) {
+  if (!onTextChunk || !model.streamGenerate) {
+    const response = await model.generate(request, context);
+
+    if (onTextChunk && response.text) {
+      await onTextChunk(response.text);
+    }
+
+    return response;
+  }
+
+  const stream = model.streamGenerate(request, context);
+  let streamedText = "";
+
+  for await (const chunk of stream) {
+    streamedText += chunk;
+    await onTextChunk(chunk);
+  }
+
+  const response = await stream.result;
+
+  if (response.text === undefined && streamedText.length > 0) {
+    return {
+      ...response,
+      text: streamedText,
+    };
+  }
+
+  return response;
+}
+
 function finalizeResult<TOutput>(
   result: RunResult<TOutput>,
   steps: StepTrace[],
@@ -236,7 +284,8 @@ export async function executeAgentRun<TInput, TOutput>(
         messages,
       });
 
-      const response = await options.model.generate(
+      const response = await generateModelResponse(
+        options.model,
         {
           instructions: options.instructions,
           messages,
@@ -249,7 +298,8 @@ export async function executeAgentRun<TInput, TOutput>(
           signal: options.context.signal,
           metadata: options.context.metadata,
         },
-        options.context
+        options.context,
+        options.onTextChunk
       );
 
       steps.push({

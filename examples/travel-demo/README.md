@@ -19,3 +19,9 @@ curl -X POST http://localhost:3001/plan-trip \
   -H "content-type: application/json" \
   -d '{"city":"Tokyo"}'
 ```
+
+```bash
+curl -N -X POST http://localhost:3001/plan-trip/stream \
+  -H "content-type: application/json" \
+  -d '{"city":"Tokyo"}'
+```

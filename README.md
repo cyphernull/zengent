@@ -61,6 +61,16 @@ const planAgent = app.agent({
 const result = await planAgent.run({
   city: "Tokyo",
 });
+
+const stream = planAgent.stream({
+  city: "Tokyo",
+});
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk);
+}
+
+const streamedResult = await stream.result;
 ```
 
 ## Multi-Agent Flow
@@ -221,6 +231,12 @@ npm run dev
 Both demos read `DEEPSEEK_API_KEY` from `.env`.
 
 `outputSchema` is the only output contract you define for agents. zengent uses native provider structured output when available, and automatically falls back to JSON guidance plus local schema validation when a provider does not expose a native schema mode.
+
+`stream()` is the realtime content path:
+
+- `agent.stream(...)` yields text chunks
+- `flow.stream(...)` yields tagged chunks like `{ node, text }`
+- both still expose `.result` for the final validated `RunResult`
 
 ## Mental Model
 

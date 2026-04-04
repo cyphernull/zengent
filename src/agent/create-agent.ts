@@ -1,6 +1,7 @@
 import type { ZodType } from "zod";
 
 import { createRunContext } from "../core/context.js";
+import { createAsyncQueue } from "../core/async-queue.js";
 import type { RunStream, RunResult } from "../core/result.js";
 import { ValidationError } from "../core/errors.js";
 import type { EventHandler, ModelAdapter, RunContext, RunContextOptions, ZodSchema, InferSchema } from "../core/types.js";
@@ -69,53 +70,6 @@ export type AgentInput<TAgent> = TAgent extends Agent<infer TInput, any, any, an
 export type AgentOutput<TAgent> = TAgent extends Agent<any, infer TOutput, any, any>
   ? TOutput
   : never;
-
-function createEventQueue() {
-  const values: import("../core/types.js").RunEvent[] = [];
-  const resolvers: Array<(value: IteratorResult<import("../core/types.js").RunEvent>) => void> = [];
-  let finished = false;
-
-  return {
-    push(value: import("../core/types.js").RunEvent) {
-      const resolver = resolvers.shift();
-
-      if (resolver) {
-        resolver({ done: false, value });
-        return;
-      }
-
-      values.push(value);
-    },
-    finish() {
-      finished = true;
-
-      while (resolvers.length > 0) {
-        const resolver = resolvers.shift();
-        resolver?.({ done: true, value: undefined });
-      }
-    },
-    async *stream() {
-      while (!finished || values.length > 0) {
-        if (values.length > 0) {
-          yield values.shift() as import("../core/types.js").RunEvent;
-          continue;
-        }
-
-        const result = await new Promise<IteratorResult<import("../core/types.js").RunEvent>>(
-          (resolve) => {
-            resolvers.push(resolve);
-          }
-        );
-
-        if (result.done) {
-          return;
-        }
-
-        yield result.value;
-      }
-    },
-  };
-}
 
 function mergeEventHandlers(
   left?: EventHandler,
@@ -203,12 +157,11 @@ export function createAgent<
       });
     },
     stream(input, runOptions) {
-      const queue = createEventQueue();
+      const queue = createAsyncQueue<string>();
+      const textStream = queue.stream();
       const context = buildContext({
         ...runOptions,
-        onEvent: mergeEventHandlers(runOptions?.onEvent, async (event) => {
-          queue.push(event);
-        }),
+        onEvent: runOptions?.onEvent,
       });
       let parsedInput: InferSchema<TInputSchema>;
 
@@ -228,8 +181,9 @@ export function createAgent<
 
         return {
           result: failed,
+          textStream,
           [Symbol.asyncIterator]() {
-            return queue.stream();
+            return textStream[Symbol.asyncIterator]();
           },
         };
       }
@@ -250,14 +204,18 @@ export function createAgent<
           ...runOptions,
           context,
         },
+        onTextChunk: async (chunk) => {
+          queue.push(chunk);
+        },
       }).finally(() => {
         queue.finish();
       });
 
       return {
         result,
+        textStream,
         [Symbol.asyncIterator]() {
-          return queue.stream();
+          return textStream[Symbol.asyncIterator]();
         },
       };
     },

@@ -1,4 +1,10 @@
-import { appendStructuredOutputHint, createJsonModeResponseFormat, createModelAdapter, requireApiKey } from "./shared.js";
+import {
+  appendStructuredOutputHint,
+  createJsonModeResponseFormat,
+  createModelAdapter,
+  createOpenAICompatibleStream,
+  requireApiKey,
+} from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor } from "../core/types.js";
 
 interface DeepSeekFunctionToolCall {
@@ -192,6 +198,81 @@ export function deepseekAdapter(
             }
           : undefined,
         raw: payload,
+      };
+    },
+    streamGenerate<TOutput>(
+      request: ModelRequest<TOutput>,
+      context: RunContext
+    ) {
+      const fetchImpl = config.fetch ?? globalThis.fetch;
+
+      if (!fetchImpl) {
+        throw new Error("No fetch implementation is available for the DeepSeek adapter.");
+      }
+
+      const apiKey = requireApiKey("DeepSeek", config.apiKey, "DEEPSEEK_API_KEY");
+
+      const responsePromise = fetchImpl(
+        `${config.baseUrl ?? "https://api.deepseek.com"}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${apiKey}`,
+            ...config.headers,
+          },
+          signal: request.signal ?? context.signal,
+          body: JSON.stringify({
+            model: config.model,
+            stream: true,
+            messages: [
+              ...(appendStructuredOutputHint(request.instructions, request)
+                ? [{ role: "system", content: appendStructuredOutputHint(request.instructions, request) }]
+                : []),
+              ...toDeepSeekMessages(request.messages),
+            ],
+            ...(request.tools
+              ? {
+                  tools: request.tools.map((tool: ToolDescriptor) => ({
+                    type: "function",
+                    function: {
+                      name: tool.name,
+                      description: tool.description,
+                      parameters: toToolSchema(tool.inputSchema),
+                    },
+                  })),
+                }
+              : {}),
+            ...(createJsonModeResponseFormat(request)
+              ? {
+                  response_format: createJsonModeResponseFormat(request),
+                }
+              : {}),
+          }),
+        }
+      ).then((response) => {
+        if (!response.ok) {
+          throw new Error(
+            `DeepSeek adapter failed with ${response.status} ${response.statusText}.`
+          );
+        }
+
+        return response;
+      });
+      const streamPromise = responsePromise.then((response) =>
+        createOpenAICompatibleStream<TOutput>(response)
+      );
+      const textStream = (async function* () {
+        const stream = await streamPromise;
+        yield* stream;
+      })();
+
+      return {
+        result: streamPromise.then((stream) => stream.result),
+        textStream,
+        async *[Symbol.asyncIterator]() {
+          yield* textStream;
+        },
       };
     },
   });

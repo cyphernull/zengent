@@ -19,3 +19,9 @@ curl -X POST http://localhost:3002/analyze-stock \
   -H "content-type: application/json" \
   -d '{"symbol":"AAPL","timeframe":"1M"}'
 ```
+
+```bash
+curl -N -X POST http://localhost:3002/analyze-stock/stream \
+  -H "content-type: application/json" \
+  -d '{"symbol":"AAPL","timeframe":"1M"}'
+```

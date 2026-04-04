@@ -1,4 +1,9 @@
-import { createModelAdapter, createOpenAICompatibleResponseFormat, requireApiKey } from "./shared.js";
+import {
+  createModelAdapter,
+  createOpenAICompatibleResponseFormat,
+  createOpenAICompatibleStream,
+  requireApiKey,
+} from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor } from "../core/types.js";
 
 interface OpenAIToolCall {
@@ -201,6 +206,81 @@ export function openaiAdapter(
             }
           : undefined,
         raw: payload,
+      };
+    },
+    streamGenerate<TOutput>(
+      request: ModelRequest<TOutput>,
+      context: RunContext
+    ) {
+      const fetchImpl = config.fetch ?? globalThis.fetch;
+
+      if (!fetchImpl) {
+        throw new Error("No fetch implementation is available for the OpenAI adapter.");
+      }
+
+      const apiKey = requireApiKey("OpenAI", config.apiKey, "OPENAI_API_KEY");
+
+      const requestInit: RequestInit = {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${apiKey}`,
+          ...config.headers,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          stream: true,
+          messages: [
+            ...(request.instructions
+              ? [
+                  {
+                    role: "system",
+                    content: request.instructions,
+                  },
+                ]
+              : []),
+            ...toOpenAIMessages(request.messages),
+          ],
+          tools: request.tools?.map((tool: ToolDescriptor) => ({
+            type: "function",
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters: toToolSchema(tool.inputSchema),
+            },
+          })),
+          response_format: createOpenAICompatibleResponseFormat(request),
+        }),
+      };
+
+      if (request.signal ?? context.signal) {
+        requestInit.signal = request.signal ?? context.signal ?? null;
+      }
+
+      const responsePromise = fetchImpl(
+        `${config.baseUrl ?? "https://api.openai.com/v1"}/chat/completions`,
+        requestInit
+      ).then((response) => {
+        if (!response.ok) {
+          throw new Error(`OpenAI adapter failed with ${response.status} ${response.statusText}.`);
+        }
+
+        return response;
+      });
+      const streamPromise = responsePromise.then((response) =>
+        createOpenAICompatibleStream<TOutput>(response)
+      );
+      const textStream = (async function* () {
+        const stream = await streamPromise;
+        yield* stream;
+      })();
+
+      return {
+        result: streamPromise.then((stream) => stream.result),
+        textStream,
+        async *[Symbol.asyncIterator]() {
+          yield* textStream;
+        },
       };
     },
   });

@@ -66,12 +66,21 @@ export interface ModelResponse<TOutput = unknown> {
   raw?: unknown;
 }
 
+export interface ModelStream<TOutput = unknown> extends AsyncIterable<string> {
+  result: Promise<ModelResponse<TOutput>>;
+  textStream: AsyncIterable<string>;
+}
+
 export interface ModelAdapter {
   name: string;
   generate<TOutput = unknown>(
     request: ModelRequest<TOutput>,
     context: RunContext
   ): Promise<ModelResponse<TOutput>>;
+  streamGenerate?<TOutput = unknown>(
+    request: ModelRequest<TOutput>,
+    context: RunContext
+  ): ModelStream<TOutput>;
 }
 
 export type EventHandler = (event: RunEvent) => void | Promise<void>;

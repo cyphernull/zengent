@@ -1,4 +1,9 @@
-import { createModelAdapter, createOpenAICompatibleResponseFormat, requireApiKey } from "./shared.js";
+import {
+  createModelAdapter,
+  createOpenAICompatibleResponseFormat,
+  createOpenAICompatibleStream,
+  requireApiKey,
+} from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor } from "../core/types.js";
 
 interface KimiFunctionToolCall {
@@ -190,6 +195,79 @@ export function kimiAdapter(
             }
           : undefined,
         raw: payload,
+      };
+    },
+    streamGenerate<TOutput>(
+      request: ModelRequest<TOutput>,
+      context: RunContext
+    ) {
+      const fetchImpl = config.fetch ?? globalThis.fetch;
+
+      if (!fetchImpl) {
+        throw new Error("No fetch implementation is available for the Kimi adapter.");
+      }
+
+      const apiKey = requireApiKey("Kimi", config.apiKey, "MOONSHOT_API_KEY");
+
+      const responsePromise = fetchImpl(
+        `${config.baseUrl ?? "https://api.moonshot.ai/v1"}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${apiKey}`,
+            ...config.headers,
+          },
+          signal: request.signal ?? context.signal,
+          body: JSON.stringify({
+            model: config.model,
+            stream: true,
+            messages: [
+              ...(request.instructions
+                ? [{ role: "system", content: request.instructions }]
+                : []),
+              ...toKimiMessages(request.messages),
+            ],
+            ...(request.tools
+              ? {
+                  tools: request.tools.map((tool: ToolDescriptor) => ({
+                    type: "function",
+                    function: {
+                      name: tool.name,
+                      description: tool.description,
+                      parameters: toToolSchema(tool.inputSchema),
+                    },
+                  })),
+                }
+              : {}),
+            ...(createOpenAICompatibleResponseFormat(request)
+              ? {
+                  response_format: createOpenAICompatibleResponseFormat(request),
+                }
+              : {}),
+          }),
+        }
+      ).then((response) => {
+        if (!response.ok) {
+          throw new Error(`Kimi adapter failed with ${response.status} ${response.statusText}.`);
+        }
+
+        return response;
+      });
+      const streamPromise = responsePromise.then((response) =>
+        createOpenAICompatibleStream<TOutput>(response)
+      );
+      const textStream = (async function* () {
+        const stream = await streamPromise;
+        yield* stream;
+      })();
+
+      return {
+        result: streamPromise.then((stream) => stream.result),
+        textStream,
+        async *[Symbol.asyncIterator]() {
+          yield* textStream;
+        },
       };
     },
   });

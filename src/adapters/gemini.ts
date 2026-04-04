@@ -1,4 +1,9 @@
-import { createGeminiGenerationConfig, createModelAdapter, requireApiKey } from "./shared.js";
+import {
+  createGeminiStream,
+  createGeminiGenerationConfig,
+  createModelAdapter,
+  requireApiKey,
+} from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolCall } from "../core/types.js";
 
 interface GeminiFunctionDeclaration {
@@ -198,12 +203,105 @@ export function geminiAdapter(
         }
       : options;
 
+  const generate = async <TOutput>(
+    request: ModelRequest<TOutput>,
+    context: RunContext
+  ): Promise<ModelResponse<TOutput>> => {
+    const fetchImpl = config.fetch ?? globalThis.fetch;
+
+    if (!fetchImpl) {
+      throw new Error("No fetch implementation is available for the Gemini adapter.");
+    }
+
+    const apiKey = requireApiKey(
+      "Gemini",
+      config.apiKey,
+      "GOOGLE_GENERATIVE_AI_API_KEY"
+    );
+
+    const url = new URL(
+      `${config.baseUrl ?? "https://generativelanguage.googleapis.com"}/${config.apiVersion ?? "v1beta"}/models/${config.model}:generateContent`
+    );
+
+    url.searchParams.set("key", apiKey);
+
+    const response = await fetchImpl(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...config.headers,
+      },
+      signal: request.signal ?? context.signal,
+      body: JSON.stringify({
+        ...(combineSystemInstruction(request)
+          ? {
+              system_instruction: combineSystemInstruction(request),
+            }
+          : {}),
+        contents: toGeminiContents(request.messages),
+        ...(toGeminiToolDeclarations(request)
+          ? {
+              tools: toGeminiToolDeclarations(request),
+            }
+          : {}),
+        ...(createGeminiGenerationConfig(request, {
+          maxOutputTokens: config.maxOutputTokens,
+        })
+          ? {
+              generationConfig: createGeminiGenerationConfig(request, {
+                maxOutputTokens: config.maxOutputTokens,
+              }),
+            }
+          : {}),
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Gemini adapter failed with ${response.status} ${response.statusText}.`
+      );
+    }
+
+    const payload = (await response.json()) as GeminiResponse;
+    const candidate = payload.candidates?.[0];
+    const parts = candidate?.content?.parts ?? [];
+    const toolCalls = parts
+      .filter(
+        (part): part is Required<Pick<GeminiPart, "functionCall">> =>
+          Boolean(part.functionCall?.name)
+      )
+      .map((part, index) => ({
+        id: part.functionCall?.id ?? `tool_${index + 1}`,
+        name: part.functionCall?.name ?? "tool",
+        input: part.functionCall?.args ?? {},
+      }));
+    const text = parts
+      .filter((part) => typeof part.text === "string" && part.text.length > 0)
+      .map((part) => part.text as string)
+      .join("\n");
+
+    return {
+      text: text || undefined,
+      toolCalls,
+      finishReason: toFinishReason(candidate?.finishReason, toolCalls),
+      usage: payload.usageMetadata
+        ? {
+            inputTokens: payload.usageMetadata.promptTokenCount,
+            outputTokens: payload.usageMetadata.candidatesTokenCount,
+            totalTokens: payload.usageMetadata.totalTokenCount,
+          }
+        : undefined,
+      raw: payload,
+    };
+  };
+
   return createModelAdapter({
     name: `gemini:${config.model}`,
-    async generate<TOutput>(
+    generate,
+    streamGenerate<TOutput>(
       request: ModelRequest<TOutput>,
       context: RunContext
-    ): Promise<ModelResponse<TOutput>> {
+    ) {
       const fetchImpl = config.fetch ?? globalThis.fetch;
 
       if (!fetchImpl) {
@@ -217,12 +315,13 @@ export function geminiAdapter(
       );
 
       const url = new URL(
-        `${config.baseUrl ?? "https://generativelanguage.googleapis.com"}/${config.apiVersion ?? "v1beta"}/models/${config.model}:generateContent`
+        `${config.baseUrl ?? "https://generativelanguage.googleapis.com"}/${config.apiVersion ?? "v1beta"}/models/${config.model}:streamGenerateContent`
       );
 
+      url.searchParams.set("alt", "sse");
       url.searchParams.set("key", apiKey);
 
-      const response = await fetchImpl(url, {
+      const responsePromise = fetchImpl(url, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -251,44 +350,29 @@ export function geminiAdapter(
               }
             : {}),
         }),
+      }).then((response) => {
+        if (!response.ok) {
+          throw new Error(
+            `Gemini adapter failed with ${response.status} ${response.statusText}.`
+          );
+        }
+
+        return response;
       });
-
-      if (!response.ok) {
-        throw new Error(
-          `Gemini adapter failed with ${response.status} ${response.statusText}.`
-        );
-      }
-
-      const payload = (await response.json()) as GeminiResponse;
-      const candidate = payload.candidates?.[0];
-      const parts = candidate?.content?.parts ?? [];
-      const toolCalls = parts
-        .filter(
-          (part): part is Required<Pick<GeminiPart, "functionCall">> =>
-            Boolean(part.functionCall?.name)
-        )
-        .map((part, index) => ({
-          id: part.functionCall?.id ?? `tool_${index + 1}`,
-          name: part.functionCall?.name ?? "tool",
-          input: part.functionCall?.args ?? {},
-        }));
-      const text = parts
-        .filter((part) => typeof part.text === "string" && part.text.length > 0)
-        .map((part) => part.text as string)
-        .join("\n");
+      const streamPromise = responsePromise.then((response) =>
+        createGeminiStream<TOutput>(response)
+      );
+      const textStream = (async function* () {
+        const stream = await streamPromise;
+        yield* stream;
+      })();
 
       return {
-        text: text || undefined,
-        toolCalls,
-        finishReason: toFinishReason(candidate?.finishReason, toolCalls),
-        usage: payload.usageMetadata
-          ? {
-              inputTokens: payload.usageMetadata.promptTokenCount,
-              outputTokens: payload.usageMetadata.candidatesTokenCount,
-              totalTokens: payload.usageMetadata.totalTokenCount,
-            }
-          : undefined,
-        raw: payload,
+        result: streamPromise.then((stream) => stream.result),
+        textStream,
+        async *[Symbol.asyncIterator]() {
+          yield* textStream;
+        },
       };
     },
   });
