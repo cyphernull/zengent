@@ -9,14 +9,14 @@ export interface ToolTrace {
 
 export interface StepTrace {
   name: string;
-  type: "model" | "tool" | "workflow";
+  type: "model" | "tool" | "flow" | "process" | "parallel";
   input?: unknown;
   output?: unknown;
   error?: string;
 }
 
 export interface RunBaseResult {
-  status: "success" | "failed" | "paused";
+  status: "success" | "failed";
   steps: StepTrace[];
   toolTraces: ToolTrace[];
   messages: unknown[];
@@ -32,19 +32,9 @@ export interface FailedRunResult extends RunBaseResult {
   status: "failed";
   error: Error;
 }
+export type RunResult<TOutput> = SuccessRunResult<TOutput> | FailedRunResult;
 
-export interface PausedRunResult<TState = unknown> extends RunBaseResult {
-  status: "paused";
-  state: TState;
-  reason?: string;
-}
-
-export type RunResult<TOutput, TPausedState = unknown> =
-  | SuccessRunResult<TOutput>
-  | FailedRunResult
-  | PausedRunResult<TPausedState>;
-
-export interface RunStream<TOutput, TPausedState = unknown>
+export interface RunStream<TOutput>
   extends AsyncIterable<import("./types.js").RunEvent> {
-  result: Promise<RunResult<TOutput, TPausedState>>;
+  result: Promise<RunResult<TOutput>>;
 }

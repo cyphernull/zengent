@@ -108,7 +108,7 @@ export type RunEvent =
       runId: string;
       timestamp: string;
       name: string;
-      status: "success" | "failed" | "paused";
+      status: "success" | "failed";
     }
   | {
       type: "model.started";
@@ -154,26 +154,29 @@ export type RunEvent =
       attempt: number;
     }
   | {
-      type: "workflow.step.started";
+      type: "flow.node.started";
       runId: string;
       timestamp: string;
-      workflow: string;
-      step: string;
+      flow: string;
+      node: string;
+      nodeType: "agent" | "process" | "parallel";
       input: unknown;
     }
   | {
-      type: "workflow.step.completed";
+      type: "flow.node.completed";
       runId: string;
       timestamp: string;
-      workflow: string;
-      step: string;
+      flow: string;
+      node: string;
+      nodeType: "agent" | "process" | "parallel";
       output: unknown;
     }
   | {
-      type: "workflow.step.failed";
+      type: "flow.node.failed";
       runId: string;
       timestamp: string;
-      workflow: string;
-      step: string;
+      flow: string;
+      node: string;
+      nodeType: "agent" | "process" | "parallel";
       error: string;
     };

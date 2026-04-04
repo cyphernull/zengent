@@ -1,26 +1,33 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createAgent } from "../src/agent/create-agent.js";
+import { createZengent } from "../src/app/create-zengent.js";
 import { createMemoryStore } from "../src/memory/memory-store.js";
-import { defineTool } from "../src/tool/define-tool.js";
 import { createFakeModel } from "../src/testing/fake-model.js";
 
 describe("agent", () => {
   it("runs a tool loop and persists thread messages", async () => {
+    const app = createZengent();
     const memory = createMemoryStore();
-    const weather = defineTool({
+
+    const weather = app.tool({
       name: "weather",
       description: "Get the weather",
-      input: z.object({ city: z.string() }),
+      inputSchema: z.object({ city: z.string() }),
+      outputSchema: z.object({
+        city: z.string(),
+        forecast: z.string(),
+      }),
       execute: async ({ city }) => ({
         city,
         forecast: "sunny",
       }),
     });
 
-    const agent = createAgent({
+    const agent = app.agent({
       name: "planner",
+      inputSchema: z.string(),
+      outputSchema: z.string(),
       instructions: "You are a travel planner.",
       model: createFakeModel([
         {
@@ -56,18 +63,26 @@ describe("agent", () => {
   });
 
   it("surfaces schema failures as explicit tool errors", async () => {
-    const weather = defineTool({
+    const app = createZengent();
+
+    const weather = app.tool({
       name: "weather",
       description: "Get the weather",
-      input: z.object({ city: z.string() }),
+      inputSchema: z.object({ city: z.string() }),
+      outputSchema: z.object({
+        city: z.string(),
+        forecast: z.string(),
+      }),
       execute: async ({ city }) => ({
         city,
         forecast: "sunny",
       }),
     });
 
-    const agent = createAgent({
+    const agent = app.agent({
       name: "planner",
+      inputSchema: z.string(),
+      outputSchema: z.string(),
       model: createFakeModel([
         {
           toolCalls: [{ id: "call_1", name: "weather", input: {} }],
@@ -89,12 +104,17 @@ describe("agent", () => {
   });
 
   it("retries flaky tools before succeeding", async () => {
+    const app = createZengent();
     let attempts = 0;
 
-    const flaky = defineTool({
+    const flaky = app.tool({
       name: "flaky",
       description: "Fails once",
-      input: z.object({ task: z.string() }),
+      inputSchema: z.object({ task: z.string() }),
+      outputSchema: z.object({
+        task: z.string(),
+        ok: z.boolean(),
+      }),
       execute: async ({ task }) => {
         attempts += 1;
 
@@ -106,8 +126,10 @@ describe("agent", () => {
       },
     });
 
-    const agent = createAgent({
+    const agent = app.agent({
       name: "worker",
+      inputSchema: z.string(),
+      outputSchema: z.string(),
       model: createFakeModel([
         {
           toolCalls: [{ id: "call_1", name: "flaky", input: { task: "demo" } }],
@@ -129,31 +151,21 @@ describe("agent", () => {
     expect(result.toolTraces).toHaveLength(2);
   });
 
-  it("fails slow tools with a timeout", async () => {
-    const slow = defineTool({
-      name: "slow",
-      description: "Takes too long",
-      input: z.object({ task: z.string() }),
-      execute: async () =>
-        await new Promise((resolve) => {
-          setTimeout(() => resolve("late"), 30);
-        }),
+  it("fails invalid agent input before model execution", async () => {
+    const app = createZengent();
+
+    const agent = app.agent({
+      name: "typed",
+      inputSchema: z.object({
+        symbol: z.string(),
+      }),
+      outputSchema: z.object({
+        summary: z.string(),
+      }),
+      model: createFakeModel(),
     });
 
-    const agent = createAgent({
-      name: "worker",
-      model: createFakeModel([
-        {
-          toolCalls: [{ id: "call_1", name: "slow", input: { task: "demo" } }],
-        },
-      ]),
-      tools: [slow],
-      toolPolicy: {
-        timeoutMs: 5,
-      },
-    });
-
-    const result = await agent.run("Run it");
+    const result = await agent.run({} as never);
 
     expect(result.status).toBe("failed");
 
@@ -161,19 +173,23 @@ describe("agent", () => {
       return;
     }
 
-    expect(result.error.message).toContain('Tool "slow" failed');
+    expect(result.error.message).toContain('Invalid input for agent "typed"');
   });
 
   it("streams events and resolves the same final result shape as run", async () => {
-    const buildAgent = () =>
-      createAgent({
+    const buildAgent = () => {
+      const app = createZengent();
+      return app.agent({
         name: "assistant",
+        inputSchema: z.string(),
+        outputSchema: z.string(),
         model: createFakeModel([
           {
             text: "hello",
           },
         ]),
       });
+    };
 
     const streamedEvents: string[] = [];
     const stream = buildAgent().stream("Hi");
