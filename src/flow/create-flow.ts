@@ -1,7 +1,9 @@
+import type { ZodType } from "zod";
+
 import { createRunContext } from "../core/context.js";
 import { ConfigError, FlowExecutionError, ValidationError } from "../core/errors.js";
 import type { RunResult, StepTrace, ToolTrace } from "../core/result.js";
-import type { EventHandler, InferSchema, RunContext, RunContextOptions, SchemaLike } from "../core/types.js";
+import type { EventHandler, InferSchema, RunContext, RunContextOptions, ZodSchema } from "../core/types.js";
 import type { Agent, AgentOutput } from "../agent/create-agent.js";
 import type { MemoryStore } from "../memory/memory-store.js";
 
@@ -20,8 +22,8 @@ export interface ProcessContext<TInput> {
 }
 
 export interface ProcessDefinition<
-  TInputSchema extends SchemaLike = SchemaLike,
-  TOutputSchema extends SchemaLike = SchemaLike,
+  TInputSchema extends ZodType = ZodType,
+  TOutputSchema extends ZodType = ZodType,
   TName extends string = string,
 > {
   readonly kind: "process";
@@ -34,8 +36,8 @@ export interface ProcessDefinition<
 }
 
 export interface DefineProcessOptions<
-  TInputSchema extends SchemaLike,
-  TOutputSchema extends SchemaLike,
+  TInputSchema extends ZodType,
+  TOutputSchema extends ZodType,
   TName extends string = string,
 > {
   name: TName;
@@ -48,8 +50,8 @@ export interface DefineProcessOptions<
 
 export function defineProcess<
   const TName extends string,
-  TInputSchema extends SchemaLike,
-  TOutputSchema extends SchemaLike,
+  TInputSchema extends ZodType,
+  TOutputSchema extends ZodType,
 >(
   options: DefineProcessOptions<TInputSchema, TOutputSchema, TName>
 ): ProcessDefinition<TInputSchema, TOutputSchema, TName> {
@@ -77,8 +79,8 @@ interface AgentFlowNode<TAgent extends AnyAgent> extends BaseFlowNode {
 }
 
 interface ProcessFlowNode<
-  TInputSchema extends SchemaLike = SchemaLike,
-  TOutputSchema extends SchemaLike = SchemaLike,
+  TInputSchema extends ZodType = ZodType,
+  TOutputSchema extends ZodType = ZodType,
 > extends BaseFlowNode {
   kind: "process";
   process: ProcessDefinition<TInputSchema, TOutputSchema>;
@@ -106,8 +108,8 @@ export interface Flow<
   TName extends string = string,
 > {
   readonly name: TName;
-  readonly inputSchema: SchemaLike<TInput>;
-  readonly outputSchema: SchemaLike<TOutput>;
+  readonly inputSchema: ZodSchema<TInput>;
+  readonly outputSchema: ZodSchema<TOutput>;
   run(input: unknown, options?: FlowRunOptions): Promise<RunResult<TOutput>>;
 }
 
@@ -119,8 +121,8 @@ interface FlowBuilderState<
   TName extends string,
 > {
   name: TName;
-  inputSchema: SchemaLike<TInput>;
-  outputSchema: SchemaLike<TOutput>;
+  inputSchema: ZodSchema<TInput>;
+  outputSchema: ZodSchema<TOutput>;
   nodes: FlowNode[];
   onFinalize?: (flow: Flow<TInput, TOutput, TResults, TName>) => void;
   finalizeFn?: (context: FlowFinalizeContext<TInput, TResults>) => Promise<TOutput> | TOutput;
@@ -150,8 +152,8 @@ export interface FlowBuilderApi<
   >;
   process<
     const TNodeName extends string,
-    TInputSchema extends SchemaLike,
-    TOutputSchema extends SchemaLike,
+    TInputSchema extends ZodType,
+    TOutputSchema extends ZodType,
   >(
     name: TNodeName,
     options: Omit<DefineProcessOptions<TInputSchema, TOutputSchema, TNodeName>, "name">
@@ -240,8 +242,8 @@ class FlowBuilder<
 
   process<
     const TNodeName extends string,
-    TInputSchema extends SchemaLike,
-    TOutputSchema extends SchemaLike,
+    TInputSchema extends ZodType,
+    TOutputSchema extends ZodType,
   >(
     name: TNodeName,
     options: Omit<DefineProcessOptions<TInputSchema, TOutputSchema, TNodeName>, "name">
@@ -575,8 +577,8 @@ function createRunnableFlow<
 
 export interface CreateFlowOptions<
   TName extends string,
-  TInputSchema extends SchemaLike,
-  TOutputSchema extends SchemaLike,
+  TInputSchema extends ZodType,
+  TOutputSchema extends ZodType,
 > {
   name: TName;
   inputSchema: TInputSchema;
@@ -588,8 +590,8 @@ export interface CreateFlowOptions<
 
 export function createFlow<
   const TName extends string,
-  TInputSchema extends SchemaLike,
-  TOutputSchema extends SchemaLike,
+  TInputSchema extends ZodType,
+  TOutputSchema extends ZodType,
 >(
   options: CreateFlowOptions<TName, TInputSchema, TOutputSchema>
 ) : FlowBuilderApi<
@@ -607,8 +609,8 @@ export function createFlow<
     TName
   >({
     name: options.name,
-    inputSchema: options.inputSchema as SchemaLike<InferSchema<TInputSchema>>,
-    outputSchema: options.outputSchema as SchemaLike<InferSchema<TOutputSchema>>,
+    inputSchema: options.inputSchema as ZodSchema<InferSchema<TInputSchema>>,
+    outputSchema: options.outputSchema as ZodSchema<InferSchema<TOutputSchema>>,
     nodes: [],
     onFinalize: options.onFinalize as FlowBuilderState<
       InferSchema<TInputSchema>,

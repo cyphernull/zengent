@@ -1,21 +1,24 @@
+import { z } from "zod";
+
 import { AgentExecutionError, ConfigError, TimeoutError, ToolExecutionError } from "../core/errors.js";
 import type { RunResult, StepTrace, ToolTrace } from "../core/result.js";
-import type { Message, ModelAdapter, ModelResponse, RunContext, SchemaLike } from "../core/types.js";
+import type { JsonSchema, Message, ModelAdapter, ModelResponse, RunContext, SchemaLike } from "../core/types.js";
 import type { MemoryStore } from "../memory/memory-store.js";
 import type { ToolDefinition } from "../tool/tool-types.js";
 import { createStopPolicy, type StopPolicy } from "./stop-policy.js";
 import { parseStructuredOutput } from "./structured-output.js";
-import type { AgentRunOptions, ToolPolicy } from "./create-agent.js";
+import type { AgentPromptArgs, AgentRunOptions, ToolPolicy } from "./create-agent.js";
 
-interface ExecuteAgentRunOptions<TOutput> {
+interface ExecuteAgentRunOptions<TInput, TOutput> {
   name: string;
   instructions?: string;
+  prompt?: (args: AgentPromptArgs<TInput>) => string;
   model: ModelAdapter;
   tools: readonly ToolDefinition[];
   outputSchema: SchemaLike<TOutput>;
   stopPolicy?: Partial<StopPolicy>;
   toolPolicy?: ToolPolicy;
-  input: unknown;
+  input: TInput;
   context: RunContext;
   memory?: MemoryStore;
   runOptions?: AgentRunOptions;
@@ -34,7 +37,14 @@ function isMessageArray(input: unknown): input is Message[] {
   );
 }
 
-function toMessages(input: unknown): Message[] {
+function toMessages<TInput>(
+  input: TInput,
+  prompt?: (args: AgentPromptArgs<TInput>) => string
+): Message[] {
+  if (prompt) {
+    return [{ role: "user", content: prompt({ input }) }];
+  }
+
   if (typeof input === "string") {
     return [{ role: "user", content: input }];
   }
@@ -52,6 +62,10 @@ function stringifyPayload(value: unknown): string {
   }
 
   return JSON.stringify(value);
+}
+
+function toToolInputJsonSchema(tool: ToolDefinition): JsonSchema {
+  return z.toJSONSchema(tool.inputSchema) as JsonSchema;
 }
 
 function toError(value: unknown): Error {
@@ -188,8 +202,8 @@ function resolveAgentOutput<TOutput>(
   }
 }
 
-export async function executeAgentRun<TOutput>(
-  options: ExecuteAgentRunOptions<TOutput>
+export async function executeAgentRun<TInput, TOutput>(
+  options: ExecuteAgentRunOptions<TInput, TOutput>
 ): Promise<RunResult<TOutput>> {
   const stopPolicy = createStopPolicy(options.stopPolicy);
   const toolPolicy: ToolPolicy = {
@@ -203,7 +217,7 @@ export async function executeAgentRun<TOutput>(
   const threadId = options.runOptions?.threadId;
   const historicalMessages =
     memory && threadId ? (await memory.getThread(threadId))?.messages ?? [] : [];
-  const runMessages = toMessages(options.input);
+  const runMessages = toMessages(options.input, options.prompt);
   const messages: Message[] = [...historicalMessages, ...runMessages];
   const appendFrom = historicalMessages.length;
 
@@ -229,7 +243,7 @@ export async function executeAgentRun<TOutput>(
           tools: options.tools.map((tool) => ({
             name: tool.name,
             description: tool.description,
-            inputSchema: tool.jsonSchema,
+            inputSchema: toToolInputJsonSchema(tool),
           })),
           outputSchema: options.outputSchema,
           signal: options.context.signal,

@@ -40,6 +40,9 @@ const weatherFetch = app.tool({
   }),
 });
 
+// The tool's inputSchema is used both for local validation
+// and for the model-side function/tool schema automatically.
+
 const planAgent = app.agent({
   name: "planAgent",
   inputSchema: z.object({
@@ -49,6 +52,7 @@ const planAgent = app.agent({
     itinerary: z.string(),
   }),
   instructions: "You are a concise travel planner.",
+  prompt: ({ input }) => `Plan a one-day trip for ${input.city}.`,
   model: openaiAdapter("gpt-4.1"),
   tools: [weatherFetch],
 });
@@ -79,6 +83,14 @@ const bullAgent = app.agent({
   outputSchema: z.object({
     bullView: z.string(),
   }),
+  instructions: "You are a bullish stock analyst. Focus on upside, momentum, catalysts, and positive signals only.",
+  prompt: ({ input }) => `
+Here is the market analysis:
+
+${JSON.stringify(input, null, 2)}
+
+Write a concise bullish view based on these signals.
+  `.trim(),
   model: openaiAdapter("gpt-4.1"),
 });
 
@@ -88,6 +100,14 @@ const bearAgent = app.agent({
   outputSchema: z.object({
     bearView: z.string(),
   }),
+  instructions: "You are a bearish stock analyst. Focus on downside risks, weakness, and negative signals only.",
+  prompt: ({ input }) => `
+Here is the market analysis:
+
+${JSON.stringify(input, null, 2)}
+
+Write a concise bearish view based on these signals.
+  `.trim(),
   model: openaiAdapter("gpt-4.1"),
 });
 
@@ -103,6 +123,35 @@ const managerAgent = app.agent({
     recommendation: z.string(),
     confidence: z.number(),
   }),
+  instructions: `
+You are the final portfolio manager.
+
+Your job is to weigh the market view, the bull case, and the bear case,
+then make a clear investment recommendation.
+
+Be balanced, decisive, and evidence-driven.
+Do not simply restate both sides.
+Resolve the disagreement and choose the dominant reasoning.
+
+Return:
+- recommendation: a concise action-oriented decision
+- confidence: a number from 0 to 100 representing conviction
+  `.trim(),
+  prompt: ({ input }) => `
+Original request:
+${JSON.stringify({ symbol: input.symbol }, null, 2)}
+
+Market view:
+${input.marketView}
+
+Bull case:
+${input.bullView}
+
+Bear case:
+${input.bearView}
+
+Make the final decision.
+  `.trim(),
   model: openaiAdapter("gpt-4.1"),
 });
 
@@ -163,6 +212,14 @@ zengent is built around one explicit execution spine.
 
 That separation is intentional. Agents do the reasoning. Flows make coordination obvious. Processes handle the light data work between reasoning nodes.
 
+When you want explicit model task text, use `instructions + prompt` together:
+
+- `instructions`: fixed role and long-lived behavior
+- `prompt({ input })`: this run's dynamic task content
+- `inputSchema`: validates what the agent receives
+- `outputSchema`: validates what the agent returns
+- `tool.inputSchema`: also becomes the model-side tool parameter schema automatically
+
 - One app
 - Direct single-agent runs
 - Explicit multi-agent flows
@@ -189,32 +246,34 @@ Additional first-party adapters:
 - `zengent/adapters/deepseek`
 - `zengent/adapters/kimi`
 
-## Bring Your Own Model Layer
-
-Use `aiSdkAdapter()` if you already have a model object from an AI SDK:
+Cloud adapters support both styles:
 
 ```ts
-import { aiSdkAdapter } from "zengent/adapters/ai-sdk";
+const model = openaiAdapter("gpt-4.1");
+```
 
-const model = aiSdkAdapter(existingSdkModel, {
-  name: "my-ai-sdk-model",
+This form reads the API key from the provider environment variable at request time.
+
+```ts
+const model = openaiAdapter({
+  model: "gpt-4.1",
+  apiKey: process.env.OPENAI_API_KEY,
 });
 ```
 
-Use `createModelAdapter()` if you want full control over HTTP or a custom backend:
+If both are present, the explicit `apiKey` wins over the environment variable.
 
-```ts
-import { createModelAdapter } from "zengent";
+Provider environment variables:
 
-const model = createModelAdapter({
-  name: "internal-model",
-  async generate() {
-    return {
-      text: "hello from a custom adapter",
-    };
-  },
-});
-```
+- OpenAI: `OPENAI_API_KEY`
+- Anthropic: `ANTHROPIC_API_KEY`
+- Gemini: `GOOGLE_GENERATIVE_AI_API_KEY`
+- OpenRouter: `OPENROUTER_API_KEY`
+- DeepSeek: `DEEPSEEK_API_KEY`
+- xAI: `XAI_API_KEY`
+- Kimi / Moonshot: `MOONSHOT_API_KEY`
+
+Ollama remains local-first and does not require an API key.
 
 ## Package Structure
 
@@ -231,9 +290,44 @@ zengent/adapters/openrouter
 zengent/adapters/deepseek
 zengent/adapters/kimi
 zengent/adapters/ollama
-zengent/adapters/ai-sdk
-zengent/adapters/mcp
+zengent/integrations/mcp
 zengent/testing
+```
+
+## MCP Integration
+
+Use `zengent/integrations/mcp` when you already have an MCP client and want to turn its tools into zengent tools.
+
+This is a tool integration layer, not an MCP runtime. zengent does not currently manage MCP transport, auth, sessions, or server lifecycle.
+
+Wrap a single MCP tool explicitly:
+
+```ts
+import { z } from "zod";
+import { createMcpTool } from "zengent/integrations/mcp";
+
+const weather = createMcpTool({
+  client: mcpClient,
+  name: "weather",
+  description: "Get weather by city",
+  inputSchema: z.object({
+    city: z.string(),
+  }),
+  outputSchema: z.object({
+    forecast: z.string(),
+  }),
+});
+```
+
+Discover MCP tools from a client that supports `listTools()`:
+
+```ts
+import { discoverMcpTools } from "zengent/integrations/mcp";
+
+const discoveredTools = await discoverMcpTools({
+  client: mcpClient,
+  include: ["weather", "news"],
+});
 ```
 
 ## Design Notes

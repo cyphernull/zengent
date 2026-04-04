@@ -1,4 +1,4 @@
-import { createModelAdapter } from "./shared.js";
+import { createModelAdapter, requireApiKey } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor } from "../core/types.js";
 
 interface KimiFunctionToolCall {
@@ -121,13 +121,15 @@ export function kimiAdapter(
         throw new Error("No fetch implementation is available for the Kimi adapter.");
       }
 
+      const apiKey = requireApiKey("Kimi", config.apiKey, "MOONSHOT_API_KEY");
+
       const response = await fetchImpl(
         `${config.baseUrl ?? "https://api.moonshot.ai/v1"}/chat/completions`,
         {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}),
+            authorization: `Bearer ${apiKey}`,
             ...config.headers,
           },
           signal: request.signal ?? context.signal,

@@ -7,6 +7,7 @@ import {
 } from "../src/index.js";
 import { anthropicAdapter } from "../src/adapters/anthropic.js";
 import { geminiAdapter } from "../src/adapters/gemini.js";
+import { createMcpTool, discoverMcpTools } from "../src/integrations/mcp.js";
 import { ollamaAdapter } from "../src/adapters/ollama.js";
 import { openRouterAdapter } from "../src/adapters/openrouter.js";
 import { createFakeModel } from "../src/testing/index.js";
@@ -44,6 +45,7 @@ const planner = createAgent({
       },
     },
   ]),
+  prompt: ({ input }) => `Plan a trip for ${input.city}`,
   tools: [weather] as const,
 });
 
@@ -112,6 +114,15 @@ const bullAgent = app.agent({
   name: "bullAgent",
   inputSchema: marketOutputSchema,
   outputSchema: bullOutputSchema,
+  instructions:
+    "You are a bullish stock analyst. Focus on upside, momentum, catalysts, and positive signals only.",
+  prompt: ({ input }) => `
+Here is the market analysis:
+
+${JSON.stringify(input, null, 2)}
+
+Write a concise bullish view based on these signals.
+  `.trim(),
   model: createFakeModel([
     {
       output: {
@@ -125,6 +136,15 @@ const bearAgent = app.agent({
   name: "bearAgent",
   inputSchema: marketOutputSchema,
   outputSchema: bearOutputSchema,
+  instructions:
+    "You are a bearish stock analyst. Focus on downside risks, weakness, and negative signals only.",
+  prompt: ({ input }) => `
+Here is the market analysis:
+
+${JSON.stringify(input, null, 2)}
+
+Write a concise bearish view based on these signals.
+  `.trim(),
   model: createFakeModel([
     {
       output: {
@@ -138,6 +158,28 @@ const managerAgent = app.agent({
   name: "managerAgent",
   inputSchema: managerInputSchema,
   outputSchema: managerOutputSchema,
+  instructions: `
+You are the final portfolio manager.
+
+Your job is to weigh the market view, the bull case, and the bear case,
+then make a clear investment recommendation.
+
+Be balanced, decisive, and evidence-driven.
+Do not simply restate both sides.
+Resolve the disagreement and choose the dominant reasoning.
+
+Return:
+- recommendation: a concise action-oriented decision
+- confidence: a number from 0 to 100 representing conviction
+  `.trim(),
+  prompt: ({ input }) =>
+    [
+      `Symbol: ${input.symbol}`,
+      `Market view: ${input.marketView}`,
+      `Bull case: ${input.bullView}`,
+      `Bear case: ${input.bearView}`,
+      "Make the final decision.",
+    ].join("\n"),
   model: createFakeModel([
     {
       output: {
@@ -208,6 +250,60 @@ async function flowTypes() {
 }
 
 void flowTypes;
+
+const mcpTool = createMcpTool({
+  client: {
+    async callTool() {
+      return {
+        content: {
+          forecast: "sunny",
+        },
+      };
+    },
+  },
+  name: "weather",
+  description: "Get weather",
+  inputSchema: z.object({
+    city: z.string(),
+  }),
+  outputSchema: z.object({
+    forecast: z.string(),
+  }),
+});
+
+async function mcpTypes() {
+  const result = await mcpTool.invoke({ city: "Tokyo" }, {
+    runId: "run",
+    metadata: {},
+    now: () => new Date(),
+    emit: async () => {},
+    child: () => {
+      throw new Error("unused");
+    },
+    nextId: () => "id",
+  });
+
+  const forecast: string = result.forecast;
+  void forecast;
+
+  const tools = await discoverMcpTools({
+    client: {
+      async callTool() {
+        return {
+          content: {},
+        };
+      },
+      async listTools() {
+        return [{ name: "weather" }];
+      },
+    },
+  });
+
+  const names: string[] = tools.map((tool) => tool.name);
+  void names;
+}
+
+void mcpTypes;
 
 const providerAdapters = [
   anthropicAdapter({

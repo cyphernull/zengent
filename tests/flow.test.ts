@@ -32,6 +32,15 @@ describe("flow", () => {
       outputSchema: z.object({
         bullView: z.string(),
       }),
+      instructions:
+        "You are a bullish stock analyst. Focus on upside, momentum, catalysts, and positive signals only.",
+      prompt: ({ input }) => `
+Here is the market analysis:
+
+${JSON.stringify(input, null, 2)}
+
+Write a concise bullish view based on these signals.
+      `.trim(),
       model: createFakeModel([
         {
           output: {
@@ -47,6 +56,15 @@ describe("flow", () => {
       outputSchema: z.object({
         bearView: z.string(),
       }),
+      instructions:
+        "You are a bearish stock analyst. Focus on downside risks, weakness, and negative signals only.",
+      prompt: ({ input }) => `
+Here is the market analysis:
+
+${JSON.stringify(input, null, 2)}
+
+Write a concise bearish view based on these signals.
+      `.trim(),
       model: createFakeModel([
         {
           output: {
@@ -68,6 +86,28 @@ describe("flow", () => {
         recommendation: z.string(),
         confidence: z.number(),
       }),
+      instructions: `
+You are the final portfolio manager.
+
+Your job is to weigh the market view, the bull case, and the bear case,
+then make a clear investment recommendation.
+
+Be balanced, decisive, and evidence-driven.
+Do not simply restate both sides.
+Resolve the disagreement and choose the dominant reasoning.
+
+Return:
+- recommendation: a concise action-oriented decision
+- confidence: a number from 0 to 100 representing conviction
+      `.trim(),
+      prompt: ({ input }) =>
+        [
+          `Symbol: ${input.symbol}`,
+          `Market view: ${input.marketView}`,
+          `Bull case: ${input.bullView}`,
+          `Bear case: ${input.bearView}`,
+          "Make the final decision.",
+        ].join("\n"),
       model: createFakeModel([
         {
           output: {

@@ -1,3 +1,5 @@
+import type { ZodType } from "zod";
+
 import { randomUUID } from "node:crypto";
 
 import { ConfigError } from "../core/errors.js";
@@ -29,7 +31,10 @@ export class ZengentApp {
   private readonly eventHandlers: EventHandler[] = [];
   private readonly runs = new Map<string, AppRunRecord>();
   private readonly tools = new Map<string, ToolDefinition>();
-  private readonly agents = new Map<string, Agent>();
+  private readonly agents = new Map<
+    string,
+    Agent<any, any, readonly ToolDefinition[], string>
+  >();
   private readonly flows = new Map<string, Flow>();
 
   memory(store: MemoryStore): this {
@@ -44,8 +49,8 @@ export class ZengentApp {
 
   tool<
     const TName extends string,
-    TInputSchema extends import("../core/types.js").SchemaLike,
-    TOutputSchema extends import("../core/types.js").SchemaLike,
+    TInputSchema extends ZodType,
+    TOutputSchema extends ZodType,
   >(
     options: DefineToolOptions<TName, TInputSchema, TOutputSchema>
       | ToolDefinition<TInputSchema, import("../core/types.js").InferSchema<TOutputSchema>, TName>
@@ -62,8 +67,8 @@ export class ZengentApp {
 
   agent<
     const TName extends string,
-    TInputSchema extends import("../core/types.js").SchemaLike,
-    TOutputSchema extends import("../core/types.js").SchemaLike,
+    TInputSchema extends ZodType,
+    TOutputSchema extends ZodType,
     const TTools extends readonly ToolDefinition[] = readonly ToolDefinition[],
   >(
     options: CreateAgentOptions<TName, TInputSchema, TOutputSchema, TTools>
@@ -86,8 +91,8 @@ export class ZengentApp {
 
   flow<
     const TName extends string,
-    TInputSchema extends import("../core/types.js").SchemaLike,
-    TOutputSchema extends import("../core/types.js").SchemaLike,
+    TInputSchema extends ZodType,
+    TOutputSchema extends ZodType,
   >(options: CreateFlowOptions<TName, TInputSchema, TOutputSchema>) {
     return createFlow({
       ...options,

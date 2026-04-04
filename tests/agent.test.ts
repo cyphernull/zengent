@@ -9,6 +9,14 @@ describe("agent", () => {
   it("runs a tool loop and persists thread messages", async () => {
     const app = createZengent();
     const memory = createMemoryStore();
+    const model = createFakeModel([
+      {
+        toolCalls: [{ id: "call_1", name: "weather", input: { city: "Paris" } }],
+      },
+      {
+        text: "Paris is sunny. Walk by the Seine and visit the Louvre.",
+      },
+    ]);
 
     const weather = app.tool({
       name: "weather",
@@ -29,14 +37,7 @@ describe("agent", () => {
       inputSchema: z.string(),
       outputSchema: z.string(),
       instructions: "You are a travel planner.",
-      model: createFakeModel([
-        {
-          toolCalls: [{ id: "call_1", name: "weather", input: { city: "Paris" } }],
-        },
-        {
-          text: "Paris is sunny. Walk by the Seine and visit the Louvre.",
-        },
-      ]),
+      model,
       tools: [weather],
       memory,
     });
@@ -56,6 +57,15 @@ describe("agent", () => {
     expect(result.toolTraces[0]?.output).toEqual({
       city: "Paris",
       forecast: "sunny",
+    });
+    expect(model.calls[0]?.tools?.[0]?.inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        city: {
+          type: "string",
+        },
+      },
+      required: ["city"],
     });
 
     const thread = await memory.getThread("trip-thread");
@@ -204,5 +214,45 @@ describe("agent", () => {
     expect(streamedEvents).toContain("run.started");
     expect(streamedEvents).toContain("model.completed");
     expect(streamedResult).toEqual(directResult);
+  });
+
+  it("uses prompt output as the user message while keeping instructions intact", async () => {
+    const app = createZengent();
+    const model = createFakeModel([
+      {
+        text: "bearish summary",
+      },
+    ]);
+
+    const agent = app.agent({
+      name: "bearAgent",
+      inputSchema: z.object({
+        marketView: z.string(),
+      }),
+      outputSchema: z.string(),
+      instructions: "You are a bearish stock analyst.",
+      prompt: ({ input }) => `Here is the market data:\n${input.marketView}`,
+      model,
+    });
+
+    const result = await agent.run({
+      marketView: "Momentum is weakening.",
+    });
+
+    expect(result.status).toBe("success");
+    expect(model.calls).toHaveLength(1);
+    expect(model.calls[0]?.instructions).toBe("You are a bearish stock analyst.");
+    expect(model.calls[0]?.messages[0]).toEqual({
+      role: "user",
+      content: "Here is the market data:\nMomentum is weakening.",
+    });
+    expect(model.calls[0]?.messages).toEqual(
+      expect.arrayContaining([
+        {
+          role: "user",
+          content: "Here is the market data:\nMomentum is weakening.",
+        },
+      ])
+    );
   });
 });

@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 
-import { aiSdkAdapter, type AISDKLikeModel } from "../src/adapters/ai-sdk.js";
 import { anthropicAdapter } from "../src/adapters/anthropic.js";
 import { deepseekAdapter } from "../src/adapters/deepseek.js";
 import { geminiAdapter } from "../src/adapters/gemini.js";
@@ -18,6 +17,30 @@ type FetchCall = {
   url: string;
   init: RequestInit;
 };
+
+async function withEnv<TValue>(
+  key: string,
+  value: string | undefined,
+  run: () => Promise<TValue>
+) {
+  const previous = process.env[key];
+
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = previous;
+    }
+  }
+}
 
 function jsonResponse(payload: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(payload), {
@@ -84,30 +107,13 @@ async function exerciseAdapter(adapter: {
 }
 
 describe("adapters", () => {
-  it("normalizes fake, AI SDK, and OpenAI adapters to the same contract", async () => {
+  it("normalizes fake and OpenAI adapters to the same contract", async () => {
     const fake = createFakeModel([
       {
         text: "hi",
         toolCalls: [{ id: "1", name: "search", input: { q: "hello" } }],
       },
     ]);
-
-    const aiSdkModel: AISDKLikeModel = {
-      async generate() {
-        return {
-          text: "hi",
-          toolCalls: [
-            {
-              toolCallId: "1",
-              toolName: "search",
-              args: { q: "hello" },
-            },
-          ],
-        };
-      },
-    };
-
-    const aiSdk = aiSdkAdapter(aiSdkModel);
     const calls: FetchCall[] = [];
     const openai = openaiAdapter({
       model: "gpt-test",
@@ -137,9 +143,8 @@ describe("adapters", () => {
       ),
     });
 
-    const [fakeResult, aiSdkResult, openaiResult] = await Promise.all([
+    const [fakeResult, openaiResult] = await Promise.all([
       exerciseAdapter(fake),
-      exerciseAdapter(aiSdk),
       exerciseAdapter(openai),
     ]);
 
@@ -147,12 +152,158 @@ describe("adapters", () => {
       text: "hi",
       toolCalls: [{ id: "1", name: "search", input: { q: "hello" } }],
     });
-    expect(aiSdkResult).toEqual(fakeResult);
     expect(openaiResult.text).toBe(fakeResult.text);
     expect(openaiResult.toolCalls).toEqual(fakeResult.toolCalls);
     expect(calls[0]?.url).toBe("https://api.openai.com/v1/chat/completions");
     expect(calls[0]?.init.headers).toMatchObject({
       authorization: "Bearer openai-key",
+    });
+  });
+
+  it("prefers explicit apiKey over environment variables", async () => {
+    const calls: FetchCall[] = [];
+
+    await withEnv("OPENAI_API_KEY", "env-openai-key", async () => {
+      const adapter = openaiAdapter({
+        model: "gpt-test",
+        apiKey: "explicit-openai-key",
+        fetch: createFetchStub(
+          {
+            choices: [{ message: { content: "ok" } }],
+          },
+          calls
+        ),
+      });
+
+      await exerciseAdapter(adapter);
+    });
+
+    expect(calls[0]?.init.headers).toMatchObject({
+      authorization: "Bearer explicit-openai-key",
+    });
+  });
+
+  it("falls back to provider environment variables when apiKey is omitted", async () => {
+    const captures = {
+      openai: [] as FetchCall[],
+      anthropic: [] as FetchCall[],
+      gemini: [] as FetchCall[],
+      openrouter: [] as FetchCall[],
+      deepseek: [] as FetchCall[],
+      xai: [] as FetchCall[],
+      kimi: [] as FetchCall[],
+    };
+
+    await withEnv("OPENAI_API_KEY", "env-openai-key", async () => {
+      const adapter = openaiAdapter({
+        model: "gpt-test",
+        fetch: createFetchStub(
+          {
+            choices: [{ message: { content: "openai" } }],
+          },
+          captures.openai
+        ),
+      });
+      await exerciseAdapter(adapter);
+    });
+
+    await withEnv("ANTHROPIC_API_KEY", "env-anthropic-key", async () => {
+      const adapter = anthropicAdapter({
+        model: "claude-test",
+        fetch: createFetchStub(
+          {
+            content: [{ type: "text", text: "anthropic" }],
+            stop_reason: "end_turn",
+          },
+          captures.anthropic
+        ),
+      });
+      await exerciseAdapter(adapter);
+    });
+
+    await withEnv("GOOGLE_GENERATIVE_AI_API_KEY", "env-gemini-key", async () => {
+      const adapter = geminiAdapter({
+        model: "gemini-test",
+        fetch: createFetchStub(
+          {
+            candidates: [{ content: { parts: [{ text: "gemini" }] } }],
+          },
+          captures.gemini
+        ),
+      });
+      await exerciseAdapter(adapter);
+    });
+
+    await withEnv("OPENROUTER_API_KEY", "env-openrouter-key", async () => {
+      const adapter = openRouterAdapter({
+        model: "router-test",
+        fetch: createFetchStub(
+          {
+            choices: [{ message: { content: "openrouter" } }],
+          },
+          captures.openrouter
+        ),
+      });
+      await exerciseAdapter(adapter);
+    });
+
+    await withEnv("DEEPSEEK_API_KEY", "env-deepseek-key", async () => {
+      const adapter = deepseekAdapter({
+        model: "deepseek-test",
+        fetch: createFetchStub(
+          {
+            choices: [{ message: { content: "deepseek" } }],
+          },
+          captures.deepseek
+        ),
+      });
+      await exerciseAdapter(adapter);
+    });
+
+    await withEnv("XAI_API_KEY", "env-xai-key", async () => {
+      const adapter = xaiAdapter({
+        model: "grok-test",
+        fetch: createFetchStub(
+          {
+            choices: [{ message: { content: "xai" } }],
+          },
+          captures.xai
+        ),
+      });
+      await exerciseAdapter(adapter);
+    });
+
+    await withEnv("MOONSHOT_API_KEY", "env-moonshot-key", async () => {
+      const adapter = kimiAdapter({
+        model: "kimi-test",
+        fetch: createFetchStub(
+          {
+            choices: [{ message: { content: "kimi" } }],
+          },
+          captures.kimi
+        ),
+      });
+      await exerciseAdapter(adapter);
+    });
+
+    expect(captures.openai[0]?.init.headers).toMatchObject({
+      authorization: "Bearer env-openai-key",
+    });
+    expect(captures.anthropic[0]?.init.headers).toMatchObject({
+      "x-api-key": "env-anthropic-key",
+    });
+    expect(captures.gemini[0]?.url).toContain("key=env-gemini-key");
+    expect(captures.openrouter[0]?.init.headers).toMatchObject({
+      authorization: "Bearer env-openrouter-key",
+    });
+    expect(captures.deepseek[0]?.init.headers).toMatchObject({
+      authorization: "Bearer env-deepseek-key",
+    });
+    expect(captures.xai[0]?.init.headers).toMatchObject({
+      authorization: "Bearer env-xai-key",
+    });
+    expect(captures.kimi[0]?.init.headers).toMatchObject({
+      authorization: "Bearer env-moonshot-key",
     });
   });
 
@@ -664,6 +815,7 @@ describe("adapters", () => {
         label: "OpenAI",
         adapter: openaiAdapter({
           model: "gpt-test",
+          apiKey: "openai-key",
           fetch: createFetchStub({}, [], { status: 500, statusText: "Boom" }),
         }),
       },
@@ -671,6 +823,7 @@ describe("adapters", () => {
         label: "Anthropic",
         adapter: anthropicAdapter({
           model: "claude-test",
+          apiKey: "anthropic-key",
           fetch: createFetchStub({}, [], { status: 500, statusText: "Boom" }),
         }),
       },
@@ -678,6 +831,7 @@ describe("adapters", () => {
         label: "Gemini",
         adapter: geminiAdapter({
           model: "gemini-test",
+          apiKey: "gemini-key",
           fetch: createFetchStub({}, [], { status: 500, statusText: "Boom" }),
         }),
       },
@@ -685,6 +839,7 @@ describe("adapters", () => {
         label: "xAI",
         adapter: xaiAdapter({
           model: "grok-test",
+          apiKey: "xai-key",
           fetch: createFetchStub({}, [], { status: 500, statusText: "Boom" }),
         }),
       },
@@ -692,6 +847,7 @@ describe("adapters", () => {
         label: "OpenRouter",
         adapter: openRouterAdapter({
           model: "router-test",
+          apiKey: "router-key",
           fetch: createFetchStub({}, [], { status: 500, statusText: "Boom" }),
         }),
       },
@@ -699,6 +855,7 @@ describe("adapters", () => {
         label: "DeepSeek",
         adapter: deepseekAdapter({
           model: "deepseek-test",
+          apiKey: "deepseek-key",
           fetch: createFetchStub({}, [], { status: 500, statusText: "Boom" }),
         }),
       },
@@ -706,6 +863,7 @@ describe("adapters", () => {
         label: "Kimi",
         adapter: kimiAdapter({
           model: "kimi-test",
+          apiKey: "kimi-key",
           fetch: createFetchStub({}, [], { status: 500, statusText: "Boom" }),
         }),
       },
@@ -730,16 +888,83 @@ describe("adapters", () => {
     }
   });
 
+  it("throws clear missing-key errors only when a request is made", async () => {
+    const missingKeyCases = [
+      {
+        label: "OpenAI",
+        envVar: "OPENAI_API_KEY",
+        adapter: openaiAdapter("gpt-test"),
+        expected: "OpenAI adapter requires an API key. Pass apiKey explicitly or set OPENAI_API_KEY.",
+      },
+      {
+        label: "Anthropic",
+        envVar: "ANTHROPIC_API_KEY",
+        adapter: anthropicAdapter("claude-test"),
+        expected:
+          "Anthropic adapter requires an API key. Pass apiKey explicitly or set ANTHROPIC_API_KEY.",
+      },
+      {
+        label: "Gemini",
+        envVar: "GOOGLE_GENERATIVE_AI_API_KEY",
+        adapter: geminiAdapter("gemini-test"),
+        expected:
+          "Gemini adapter requires an API key. Pass apiKey explicitly or set GOOGLE_GENERATIVE_AI_API_KEY.",
+      },
+      {
+        label: "xAI",
+        envVar: "XAI_API_KEY",
+        adapter: xaiAdapter("grok-test"),
+        expected: "xAI adapter requires an API key. Pass apiKey explicitly or set XAI_API_KEY.",
+      },
+      {
+        label: "OpenRouter",
+        envVar: "OPENROUTER_API_KEY",
+        adapter: openRouterAdapter("router-test"),
+        expected:
+          "OpenRouter adapter requires an API key. Pass apiKey explicitly or set OPENROUTER_API_KEY.",
+      },
+      {
+        label: "DeepSeek",
+        envVar: "DEEPSEEK_API_KEY",
+        adapter: deepseekAdapter("deepseek-test"),
+        expected:
+          "DeepSeek adapter requires an API key. Pass apiKey explicitly or set DEEPSEEK_API_KEY.",
+      },
+      {
+        label: "Kimi",
+        envVar: "MOONSHOT_API_KEY",
+        adapter: kimiAdapter("kimi-test"),
+        expected:
+          "Kimi adapter requires an API key. Pass apiKey explicitly or set MOONSHOT_API_KEY.",
+      },
+    ] as const;
+
+    for (const config of missingKeyCases) {
+      await withEnv(config.envVar, undefined, async () => {
+        await expect(
+          config.adapter.generate(
+            {
+              messages: [{ role: "user", content: "Hello" }],
+            },
+            createRunContext()
+          )
+        ).rejects.toThrow(config.expected);
+      });
+    }
+  });
+
   it("runs through createAgent with every first-party provider adapter", async () => {
     const adapters = [
       openaiAdapter({
         model: "gpt-test",
+        apiKey: "openai-key",
         fetch: createFetchStub({
           choices: [{ message: { content: "openai" } }],
         }, []),
       }),
       anthropicAdapter({
         model: "claude-test",
+        apiKey: "anthropic-key",
         fetch: createFetchStub({
           content: [{ type: "text", text: "anthropic" }],
           stop_reason: "end_turn",
@@ -747,30 +972,35 @@ describe("adapters", () => {
       }),
       geminiAdapter({
         model: "gemini-test",
+        apiKey: "gemini-key",
         fetch: createFetchStub({
           candidates: [{ content: { parts: [{ text: "gemini" }] } }],
         }, []),
       }),
       xaiAdapter({
         model: "grok-test",
+        apiKey: "xai-key",
         fetch: createFetchStub({
           choices: [{ message: { content: "xai" } }],
         }, []),
       }),
       openRouterAdapter({
         model: "router-test",
+        apiKey: "router-key",
         fetch: createFetchStub({
           choices: [{ message: { content: "openrouter" } }],
         }, []),
       }),
       deepseekAdapter({
         model: "deepseek-test",
+        apiKey: "deepseek-key",
         fetch: createFetchStub({
           choices: [{ message: { content: "deepseek" } }],
         }, []),
       }),
       kimiAdapter({
         model: "kimi-test",
+        apiKey: "kimi-key",
         fetch: createFetchStub({
           choices: [{ message: { content: "kimi" } }],
         }, []),

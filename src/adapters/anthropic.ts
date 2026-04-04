@@ -1,4 +1,4 @@
-import { createModelAdapter } from "./shared.js";
+import { createModelAdapter, requireApiKey } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor, ToolCall } from "../core/types.js";
 
 interface AnthropicTextBlock {
@@ -199,6 +199,8 @@ export function anthropicAdapter(
         throw new Error("No fetch implementation is available for the Anthropic adapter.");
       }
 
+      const apiKey = requireApiKey("Anthropic", config.apiKey, "ANTHROPIC_API_KEY");
+
       const response = await fetchImpl(
         `${config.baseUrl ?? "https://api.anthropic.com"}/v1/messages`,
         {
@@ -206,7 +208,7 @@ export function anthropicAdapter(
           headers: {
             "content-type": "application/json",
             "anthropic-version": config.version ?? "2023-06-01",
-            ...(config.apiKey ? { "x-api-key": config.apiKey } : {}),
+            "x-api-key": apiKey,
             ...config.headers,
           },
           signal: request.signal ?? context.signal,
