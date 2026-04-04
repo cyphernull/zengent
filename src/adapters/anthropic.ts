@@ -1,4 +1,4 @@
-import { createModelAdapter, requireApiKey } from "./shared.js";
+import { appendStructuredOutputHint, createModelAdapter, requireApiKey } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor, ToolCall } from "../core/types.js";
 
 interface AnthropicTextBlock {
@@ -65,8 +65,10 @@ export interface AnthropicAdapterOptions {
 function combineSystemText(request: ModelRequest): string | undefined {
   const segments: string[] = [];
 
-  if (request.instructions) {
-    segments.push(request.instructions);
+  const instructions = appendStructuredOutputHint(request.instructions, request);
+
+  if (instructions) {
+    segments.push(instructions);
   }
 
   for (const message of request.messages) {

@@ -1,4 +1,4 @@
-import { createModelAdapter, requireApiKey } from "./shared.js";
+import { createGeminiGenerationConfig, createModelAdapter, requireApiKey } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolCall } from "../core/types.js";
 
 interface GeminiFunctionDeclaration {
@@ -241,11 +241,13 @@ export function geminiAdapter(
                 tools: toGeminiToolDeclarations(request),
               }
             : {}),
-          ...(config.maxOutputTokens
+          ...(createGeminiGenerationConfig(request, {
+            maxOutputTokens: config.maxOutputTokens,
+          })
             ? {
-                generationConfig: {
+                generationConfig: createGeminiGenerationConfig(request, {
                   maxOutputTokens: config.maxOutputTokens,
-                },
+                }),
               }
             : {}),
         }),

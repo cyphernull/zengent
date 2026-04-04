@@ -1,4 +1,4 @@
-import { createModelAdapter } from "./shared.js";
+import { createModelAdapter, createOllamaFormat } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor } from "../core/types.js";
 
 interface OllamaToolCall {
@@ -129,6 +129,11 @@ export function ollamaAdapter(
                       parameters: toToolSchema(tool.inputSchema),
                     },
                   })),
+                }
+              : {}),
+            ...(createOllamaFormat(request)
+              ? {
+                  format: createOllamaFormat(request),
                 }
               : {}),
             ...(config.keepAlive !== undefined
