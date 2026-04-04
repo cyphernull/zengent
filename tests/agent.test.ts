@@ -255,4 +255,58 @@ describe("agent", () => {
       ])
     );
   });
+
+  it("fails with a clear error when structured output is not valid JSON", async () => {
+    const app = createZengent();
+
+    const agent = app.agent({
+      name: "planner",
+      inputSchema: z.string(),
+      outputSchema: z.object({
+        itinerary: z.string(),
+      }),
+      model: createFakeModel([
+        {
+          text: "not json",
+        },
+      ]),
+    });
+
+    const result = await agent.run("Plan Tokyo");
+
+    expect(result.status).toBe("failed");
+
+    if (result.status !== "failed") {
+      return;
+    }
+
+    expect(result.error.message).toContain("Model output is not valid JSON");
+  });
+
+  it("fails with a clear error when JSON output does not match the schema", async () => {
+    const app = createZengent();
+
+    const agent = app.agent({
+      name: "planner",
+      inputSchema: z.string(),
+      outputSchema: z.object({
+        itinerary: z.string(),
+      }),
+      model: createFakeModel([
+        {
+          text: "{\"summary\":\"missing itinerary\"}",
+        },
+      ]),
+    });
+
+    const result = await agent.run("Plan Tokyo");
+
+    expect(result.status).toBe("failed");
+
+    if (result.status !== "failed") {
+      return;
+    }
+
+    expect(result.error.message).toContain("itinerary");
+  });
 });

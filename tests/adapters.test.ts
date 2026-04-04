@@ -106,6 +106,31 @@ async function exerciseAdapter(adapter: {
   );
 }
 
+async function exerciseStructuredAdapter(adapter: {
+  generate: (
+    request: {
+      instructions?: string;
+      messages: Array<{ role: "user" | "assistant" | "tool"; content: string; metadata?: Record<string, unknown>; name?: string; toolCallId?: string }>;
+      outputSchema?: z.ZodTypeAny;
+    },
+    context: ReturnType<typeof createRunContext>
+  ) => Promise<{
+    text?: string;
+    toolCalls?: Array<{ id: string; name: string; input: unknown }>;
+  }>;
+}) {
+  return adapter.generate(
+    {
+      instructions: "Be helpful",
+      messages: [{ role: "user", content: "Hello" }],
+      outputSchema: z.object({
+        answer: z.string(),
+      }),
+    },
+    createRunContext()
+  );
+}
+
 describe("adapters", () => {
   it("normalizes fake and OpenAI adapters to the same contract", async () => {
     const fake = createFakeModel([
@@ -561,6 +586,203 @@ describe("adapters", () => {
       expect(callLog[0]?.url).toBe(config.expectedUrl);
       expect(getJsonBody(callLog[0]!).tools?.[0]?.function?.name).toBe("search");
     }
+  });
+
+  it("adds provider-side structured output when the adapter supports it", async () => {
+    const captures = {
+      openai: [] as FetchCall[],
+      deepseek: [] as FetchCall[],
+      gemini: [] as FetchCall[],
+      openrouter: [] as FetchCall[],
+      xai: [] as FetchCall[],
+      kimi: [] as FetchCall[],
+      ollama: [] as FetchCall[],
+    };
+
+    await exerciseStructuredAdapter(
+      openaiAdapter({
+        model: "gpt-test",
+        apiKey: "openai-key",
+        fetch: createFetchStub(
+          {
+            choices: [{ message: { content: "{\"answer\":\"ok\"}" } }],
+          },
+          captures.openai
+        ),
+      })
+    );
+
+    await exerciseStructuredAdapter(
+      deepseekAdapter({
+        model: "deepseek-chat",
+        apiKey: "deepseek-key",
+        fetch: createFetchStub(
+          {
+            choices: [{ message: { content: "{\"answer\":\"ok\"}" } }],
+          },
+          captures.deepseek
+        ),
+      })
+    );
+
+    await exerciseStructuredAdapter(
+      geminiAdapter({
+        model: "gemini-test",
+        apiKey: "gemini-key",
+        fetch: createFetchStub(
+          {
+            candidates: [{ content: { parts: [{ text: "{\"answer\":\"ok\"}" }] } }],
+          },
+          captures.gemini
+        ),
+      })
+    );
+
+    await exerciseStructuredAdapter(
+      openRouterAdapter({
+        model: "openai/gpt-4.1",
+        apiKey: "router-key",
+        fetch: createFetchStub(
+          {
+            choices: [{ message: { content: "{\"answer\":\"ok\"}" } }],
+          },
+          captures.openrouter
+        ),
+      })
+    );
+
+    await exerciseStructuredAdapter(
+      xaiAdapter({
+        model: "grok-4",
+        apiKey: "xai-key",
+        fetch: createFetchStub(
+          {
+            choices: [{ message: { content: "{\"answer\":\"ok\"}" } }],
+          },
+          captures.xai
+        ),
+      })
+    );
+
+    await exerciseStructuredAdapter(
+      kimiAdapter({
+        model: "kimi-k2.5",
+        apiKey: "kimi-key",
+        fetch: createFetchStub(
+          {
+            choices: [{ message: { content: "{\"answer\":\"ok\"}" } }],
+          },
+          captures.kimi
+        ),
+      })
+    );
+
+    await exerciseStructuredAdapter(
+      ollamaAdapter({
+        model: "qwen3",
+        fetch: createFetchStub(
+          {
+            message: { content: "{\"answer\":\"ok\"}" },
+          },
+          captures.ollama
+        ),
+      })
+    );
+
+    const openAiBody = getJsonBody(captures.openai[0]!);
+    expect(openAiBody.response_format).toMatchObject({
+      type: "json_schema",
+      json_schema: {
+        name: "zengent_output",
+        strict: true,
+      },
+    });
+    expect(openAiBody.response_format.json_schema.schema).toMatchObject({
+      type: "object",
+      properties: {
+        answer: {
+          type: "string",
+        },
+      },
+      required: ["answer"],
+    });
+
+    const deepSeekBody = getJsonBody(captures.deepseek[0]!);
+    expect(deepSeekBody.response_format).toEqual({
+      type: "json_object",
+    });
+    expect(deepSeekBody.messages[0]?.content).toContain("Return only valid JSON");
+    expect(deepSeekBody.messages[0]?.content).toContain("\"answer\"");
+
+    const geminiBody = getJsonBody(captures.gemini[0]!);
+    expect(geminiBody.generationConfig).toMatchObject({
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "object",
+        properties: {
+          answer: {
+            type: "string",
+          },
+        },
+        required: ["answer"],
+      },
+    });
+
+    for (const body of [
+      getJsonBody(captures.openrouter[0]!),
+      getJsonBody(captures.xai[0]!),
+      getJsonBody(captures.kimi[0]!),
+    ]) {
+      expect(body.response_format).toMatchObject({
+        type: "json_schema",
+        json_schema: {
+          name: "zengent_output",
+          strict: true,
+        },
+      });
+      expect(body.response_format.json_schema.schema).toMatchObject({
+        type: "object",
+        properties: {
+          answer: {
+            type: "string",
+          },
+        },
+        required: ["answer"],
+      });
+    }
+
+    expect(getJsonBody(captures.ollama[0]!).format).toMatchObject({
+      type: "object",
+      properties: {
+        answer: {
+          type: "string",
+        },
+      },
+      required: ["answer"],
+    });
+  });
+
+  it("falls back to framework-managed JSON guidance when a provider lacks native structured output", async () => {
+    const calls: FetchCall[] = [];
+
+    await exerciseStructuredAdapter(
+      anthropicAdapter({
+        model: "claude-test",
+        apiKey: "anthropic-key",
+        fetch: createFetchStub(
+          {
+            content: [{ type: "text", text: "{\"answer\":\"ok\"}" }],
+            stop_reason: "end_turn",
+          },
+          calls
+        ),
+      })
+    );
+
+    const body = getJsonBody(calls[0]!);
+    expect(body.system).toContain("Return only valid JSON");
+    expect(body.system).toContain("\"answer\"");
+    expect(body.response_format).toBeUndefined();
   });
 
   it("maps Anthropic requests and tool use independently", async () => {

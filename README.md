@@ -42,6 +42,7 @@ const weatherFetch = app.tool({
 
 // The tool's inputSchema is used both for local validation
 // and for the model-side function/tool schema automatically.
+// The agent's outputSchema also drives structured output automatically.
 
 const planAgent = app.agent({
   name: "planAgent",
@@ -199,6 +200,28 @@ const decision = await stockFlow.run({
 });
 ```
 
+## Examples
+
+This repository includes two runnable Express demos under `examples/`:
+
+- `examples/travel-demo`: a single-agent travel planner with a local weather tool
+- `examples/stock-demo`: a multi-agent stock analysis flow using `market`, `bull`, `bear`, and `manager`
+
+These demos import the repository's local `src/` files directly, so they validate the current working tree instead of the published npm package.
+
+To run one:
+
+```bash
+cd examples/travel-demo
+npm install
+cp .env.example .env
+npm run dev
+```
+
+Both demos read `DEEPSEEK_API_KEY` from `.env`.
+
+`outputSchema` is the only output contract you define for agents. zengent uses native provider structured output when available, and automatically falls back to JSON guidance plus local schema validation when a provider does not expose a native schema mode.
+
 ## Mental Model
 
 zengent is built around one explicit execution spine.
@@ -217,7 +240,7 @@ When you want explicit model task text, use `instructions + prompt` together:
 - `instructions`: fixed role and long-lived behavior
 - `prompt({ input })`: this run's dynamic task content
 - `inputSchema`: validates what the agent receives
-- `outputSchema`: validates what the agent returns
+- `outputSchema`: drives structured output and validates what the agent returns
 - `tool.inputSchema`: also becomes the model-side tool parameter schema automatically
 
 - One app

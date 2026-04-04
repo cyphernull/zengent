@@ -1,4 +1,4 @@
-import { createModelAdapter, requireApiKey } from "./shared.js";
+import { createModelAdapter, createOpenAICompatibleResponseFormat, requireApiKey } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor } from "../core/types.js";
 
 interface OpenAIToolCall {
@@ -158,6 +158,7 @@ export function openaiAdapter(
               parameters: toToolSchema(tool.inputSchema),
             },
           })),
+          response_format: createOpenAICompatibleResponseFormat(request),
         }),
       };
 

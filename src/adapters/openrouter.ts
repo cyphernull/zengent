@@ -1,4 +1,4 @@
-import { createModelAdapter, requireApiKey } from "./shared.js";
+import { createModelAdapter, createOpenAICompatibleResponseFormat, requireApiKey } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor } from "../core/types.js";
 
 interface OpenRouterFunctionToolCall {
@@ -155,6 +155,11 @@ export function openRouterAdapter(
                       parameters: toToolSchema(tool.inputSchema),
                     },
                   })),
+                }
+              : {}),
+            ...(createOpenAICompatibleResponseFormat(request)
+              ? {
+                  response_format: createOpenAICompatibleResponseFormat(request),
                 }
               : {}),
           }),

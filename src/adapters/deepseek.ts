@@ -1,4 +1,4 @@
-import { createModelAdapter, requireApiKey } from "./shared.js";
+import { appendStructuredOutputHint, createJsonModeResponseFormat, createModelAdapter, requireApiKey } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor } from "../core/types.js";
 
 interface DeepSeekFunctionToolCall {
@@ -136,8 +136,8 @@ export function deepseekAdapter(
           body: JSON.stringify({
             model: config.model,
             messages: [
-              ...(request.instructions
-                ? [{ role: "system", content: request.instructions }]
+              ...(appendStructuredOutputHint(request.instructions, request)
+                ? [{ role: "system", content: appendStructuredOutputHint(request.instructions, request) }]
                 : []),
               ...toDeepSeekMessages(request.messages),
             ],
@@ -151,6 +151,11 @@ export function deepseekAdapter(
                       parameters: toToolSchema(tool.inputSchema),
                     },
                   })),
+                }
+              : {}),
+            ...(createJsonModeResponseFormat(request)
+              ? {
+                  response_format: createJsonModeResponseFormat(request),
                 }
               : {}),
           }),
