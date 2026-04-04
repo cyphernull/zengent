@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createZengent } from "../src/app/create-zengent.js";
-import { createFakeModel } from "../src/testing/fake-model.js";
+import { createFakeModel, createFakeStreamingModel } from "../src/testing/fake-model.js";
 
 describe("flow", () => {
   it("runs a sequential and parallel pipeline with a process node", async () => {
@@ -263,5 +263,207 @@ Return:
     });
 
     expect(result.status).toBe("failed");
+  });
+
+  it("streams chunks from sequential agent nodes", async () => {
+    const app = createZengent();
+
+    const marketAgent = app.agent({
+      name: "marketAgent",
+      inputSchema: z.object({
+        symbol: z.string(),
+      }),
+      outputSchema: z.object({
+        marketView: z.string(),
+      }),
+      model: createFakeStreamingModel([
+        {
+          chunks: ["market ", "ready"],
+          response: {
+            output: {
+              marketView: "market ready",
+            },
+          },
+        },
+      ]),
+    });
+
+    const managerAgent = app.agent({
+      name: "managerAgent",
+      inputSchema: marketAgent.outputSchema,
+      outputSchema: z.object({
+        recommendation: z.string(),
+      }),
+      model: createFakeStreamingModel([
+        {
+          chunks: ["buy ", "now"],
+          response: {
+            output: {
+              recommendation: "buy now",
+            },
+          },
+        },
+      ]),
+    });
+
+    const flow = app.flow({
+      name: "streamingFlow",
+      inputSchema: z.object({
+        symbol: z.string(),
+      }),
+      outputSchema: managerAgent.outputSchema,
+    })
+      .agent("market", marketAgent)
+      .agent("manager", managerAgent)
+      .finalize(({ results }) => results.manager);
+
+    const chunks: Array<{ node: string; text: string }> = [];
+    const stream = flow.stream({
+      symbol: "AAPL",
+    });
+
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+
+    const result = await stream.result;
+
+    expect(chunks).toEqual([
+      { node: "market", text: "market " },
+      { node: "market", text: "ready" },
+      { node: "manager", text: "buy " },
+      { node: "manager", text: "now" },
+    ]);
+    expect(result.status).toBe("success");
+  });
+
+  it("streams tagged chunks from parallel agent nodes", async () => {
+    const app = createZengent();
+
+    const marketAgent = app.agent({
+      name: "marketAgent",
+      inputSchema: z.object({
+        symbol: z.string(),
+      }),
+      outputSchema: z.object({
+        marketView: z.string(),
+      }),
+      model: createFakeModel([
+        {
+          output: {
+            marketView: "stable",
+          },
+        },
+      ]),
+    });
+
+    const bullAgent = app.agent({
+      name: "bullAgent",
+      inputSchema: marketAgent.outputSchema,
+      outputSchema: z.object({
+        bullView: z.string(),
+      }),
+      model: createFakeStreamingModel([
+        {
+          chunks: ["bull-1", "bull-2"],
+          response: {
+            output: {
+              bullView: "bull complete",
+            },
+          },
+        },
+      ]),
+    });
+
+    const bearAgent = app.agent({
+      name: "bearAgent",
+      inputSchema: marketAgent.outputSchema,
+      outputSchema: z.object({
+        bearView: z.string(),
+      }),
+      model: createFakeStreamingModel([
+        {
+          chunks: ["bear-1", "bear-2"],
+          response: {
+            output: {
+              bearView: "bear complete",
+            },
+          },
+        },
+      ]),
+    });
+
+    const managerAgent = app.agent({
+      name: "managerAgent",
+      inputSchema: z.object({
+        bullView: z.string(),
+        bearView: z.string(),
+      }),
+      outputSchema: z.object({
+        recommendation: z.string(),
+      }),
+      model: createFakeModel([
+        {
+          output: {
+            recommendation: "hold",
+          },
+        },
+      ]),
+    });
+
+    const flow = app.flow({
+      name: "parallelStreamingFlow",
+      inputSchema: z.object({
+        symbol: z.string(),
+      }),
+      outputSchema: managerAgent.outputSchema,
+    })
+      .agent("market", marketAgent)
+      .parallel("debate", {
+        bull: bullAgent,
+        bear: bearAgent,
+      })
+      .process("prepareDecision", {
+        inputSchema: z.object({
+          originalInput: z.object({
+            symbol: z.string(),
+          }),
+          previous: z.object({
+            bull: bullAgent.outputSchema,
+            bear: bearAgent.outputSchema,
+          }),
+          results: z.object({
+            market: marketAgent.outputSchema,
+          }),
+        }),
+        outputSchema: managerAgent.inputSchema,
+        run: async ({ input }) => ({
+          bullView: input.previous.bull.bullView,
+          bearView: input.previous.bear.bearView,
+        }),
+      })
+      .agent("manager", managerAgent)
+      .finalize(({ results }) => results.manager);
+
+    const chunks: Array<{ node: string; text: string }> = [];
+    const stream = flow.stream({
+      symbol: "AAPL",
+    });
+
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+
+    const result = await stream.result;
+
+    expect(chunks).toEqual(
+      expect.arrayContaining([
+        { node: "bull", text: "bull-1" },
+        { node: "bull", text: "bull-2" },
+        { node: "bear", text: "bear-1" },
+        { node: "bear", text: "bear-2" },
+      ])
+    );
+    expect(result.status).toBe("success");
   });
 });

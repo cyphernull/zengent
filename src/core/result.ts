@@ -34,7 +34,17 @@ export interface FailedRunResult extends RunBaseResult {
 }
 export type RunResult<TOutput> = SuccessRunResult<TOutput> | FailedRunResult;
 
-export interface RunStream<TOutput>
-  extends AsyncIterable<import("./types.js").RunEvent> {
+export interface RunStream<TOutput> extends AsyncIterable<string> {
   result: Promise<RunResult<TOutput>>;
+  textStream: AsyncIterable<string>;
+}
+
+export interface FlowTextChunk {
+  node: string;
+  text: string;
+}
+
+export interface FlowRunStream<TOutput> extends AsyncIterable<FlowTextChunk> {
+  result: Promise<RunResult<TOutput>>;
+  textStream: AsyncIterable<FlowTextChunk>;
 }

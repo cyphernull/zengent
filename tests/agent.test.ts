@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { createZengent } from "../src/app/create-zengent.js";
 import { createMemoryStore } from "../src/memory/memory-store.js";
-import { createFakeModel } from "../src/testing/fake-model.js";
+import { createFakeModel, createFakeStreamingModel } from "../src/testing/fake-model.js";
 
 describe("agent", () => {
   it("runs a tool loop and persists thread messages", async () => {
@@ -186,34 +186,65 @@ describe("agent", () => {
     expect(result.error.message).toContain('Invalid input for agent "typed"');
   });
 
-  it("streams events and resolves the same final result shape as run", async () => {
+  it("streams text chunks and resolves the same final result shape as run", async () => {
     const buildAgent = () => {
       const app = createZengent();
       return app.agent({
         name: "assistant",
         inputSchema: z.string(),
         outputSchema: z.string(),
-        model: createFakeModel([
+        model: createFakeStreamingModel([
           {
-            text: "hello",
+            chunks: ["hel", "lo"],
           },
         ]),
       });
     };
 
-    const streamedEvents: string[] = [];
+    const streamedChunks: string[] = [];
     const stream = buildAgent().stream("Hi");
 
-    for await (const event of stream) {
-      streamedEvents.push(event.type);
+    for await (const chunk of stream) {
+      streamedChunks.push(chunk);
     }
 
     const streamedResult = await stream.result;
-    const directResult = await buildAgent().run("Hi");
 
-    expect(streamedEvents).toContain("run.started");
-    expect(streamedEvents).toContain("model.completed");
-    expect(streamedResult).toEqual(directResult);
+    expect(streamedChunks).toEqual(["hel", "lo"]);
+    expect(streamedResult).toEqual({
+      status: "success",
+      output: "hello",
+      steps: expect.any(Array),
+      toolTraces: [],
+      messages: expect.any(Array),
+      text: "hello",
+    });
+  });
+
+  it("falls back to a single text chunk when the adapter has no native stream implementation", async () => {
+    const app = createZengent();
+    const agent = app.agent({
+      name: "assistant",
+      inputSchema: z.string(),
+      outputSchema: z.string(),
+      model: createFakeModel([
+        {
+          text: "hello",
+        },
+      ]),
+    });
+
+    const chunks: string[] = [];
+    const stream = agent.stream("Hi");
+
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+
+    const result = await stream.result;
+
+    expect(chunks).toEqual(["hello"]);
+    expect(result.status).toBe("success");
   });
 
   it("uses prompt output as the user message while keeping instructions intact", async () => {

@@ -1,8 +1,9 @@
 import type { ZodType } from "zod";
 
 import { createRunContext } from "../core/context.js";
+import { createAsyncQueue } from "../core/async-queue.js";
 import { ConfigError, FlowExecutionError, ValidationError } from "../core/errors.js";
-import type { RunResult, StepTrace, ToolTrace } from "../core/result.js";
+import type { FlowRunStream, FlowTextChunk, RunResult, StepTrace, ToolTrace } from "../core/result.js";
 import type { EventHandler, InferSchema, RunContext, RunContextOptions, ZodSchema } from "../core/types.js";
 import type { Agent, AgentOutput } from "../agent/create-agent.js";
 import type { MemoryStore } from "../memory/memory-store.js";
@@ -111,6 +112,7 @@ export interface Flow<
   readonly inputSchema: ZodSchema<TInput>;
   readonly outputSchema: ZodSchema<TOutput>;
   run(input: unknown, options?: FlowRunOptions): Promise<RunResult<TOutput>>;
+  stream(input: unknown, options?: FlowRunOptions): FlowRunStream<TOutput>;
 }
 
 interface FlowBuilderState<
@@ -318,76 +320,109 @@ function createRunnableFlow<
 >(
   state: FlowBuilderState<TInput, TOutput, TResults, TPrevious, TName>
 ): Flow<TInput, TOutput, TResults, TName> {
-  return {
-    name: state.name,
-    inputSchema: state.inputSchema,
-    outputSchema: state.outputSchema,
-    async run(rawInput, options = {}) {
-      if (!state.finalizeFn) {
-        throw new ConfigError(`Flow "${state.name}" must be finalized before it can run.`);
-      }
+  async function executeFlow(
+    rawInput: unknown,
+    options: FlowRunOptions = {},
+    onTextChunk?: (chunk: FlowTextChunk) => void | Promise<void>
+  ): Promise<RunResult<TOutput>> {
+    if (!state.finalizeFn) {
+      throw new ConfigError(`Flow "${state.name}" must be finalized before it can run.`);
+    }
 
-      const mergedOnEvent = mergeEventHandlers(options.onEvent, undefined);
-      const context = createRunContext({
-        runId: options.runId,
-        metadata: options.metadata,
-        signal: options.signal,
-        now: options.now,
-        onEvent: mergedOnEvent,
-      });
-      const steps: StepTrace[] = [];
-      const toolTraces: ToolTrace[] = [];
-      const messages: unknown[] = [];
+    const mergedOnEvent = mergeEventHandlers(options.onEvent, undefined);
+    const context = createRunContext({
+      runId: options.runId,
+      metadata: options.metadata,
+      signal: options.signal,
+      now: options.now,
+      onEvent: mergedOnEvent,
+    });
+    const steps: StepTrace[] = [];
+    const toolTraces: ToolTrace[] = [];
+    const messages: unknown[] = [];
 
-      let originalInput: TInput;
+    let originalInput: TInput;
 
-      try {
-        originalInput = state.inputSchema.parse(rawInput);
-      } catch (error) {
-        return {
-          status: "failed",
-          error: new ValidationError(`Invalid input for flow "${state.name}".`, {
-            cause: error,
-          }),
-          steps,
-          toolTraces,
-          messages,
-        };
-      }
+    try {
+      originalInput = state.inputSchema.parse(rawInput);
+    } catch (error) {
+      return {
+        status: "failed",
+        error: new ValidationError(`Invalid input for flow "${state.name}".`, {
+          cause: error,
+        }),
+        steps,
+        toolTraces,
+        messages,
+      };
+    }
 
-      await context.emit({
-        type: "run.started",
-        name: state.name,
-        input: originalInput,
-      });
+    await context.emit({
+      type: "run.started",
+      name: state.name,
+      input: originalInput,
+    });
 
-      try {
-        const results: Record<string, unknown> = {};
-        let previous: unknown = undefined;
+    try {
+      const results: Record<string, unknown> = {};
+      let previous: unknown = undefined;
 
-        for (const node of state.nodes) {
-          const baseInput =
-            previous === undefined
-              ? originalInput
-              : {
-                  originalInput,
-                  previous,
-                  results,
-                };
+      for (const node of state.nodes) {
+        const baseInput =
+          previous === undefined
+            ? originalInput
+            : {
+                originalInput,
+                previous,
+                results,
+              };
 
-          await context.emit({
-            type: "flow.node.started",
-            flow: state.name,
-            node: node.name,
-            nodeType: node.kind,
-            input: baseInput,
-          });
+        await context.emit({
+          type: "flow.node.started",
+          flow: state.name,
+          node: node.name,
+          nodeType: node.kind,
+          input: baseInput,
+        });
 
-          try {
-            let value: unknown;
+        try {
+          let value: unknown;
 
-            if (node.kind === "agent") {
-              const payload = previous === undefined ? originalInput : previous;
+          if (node.kind === "agent") {
+            const payload = previous === undefined ? originalInput : previous;
+
+            if (onTextChunk) {
+              const stream = node.agent.stream(payload, {
+                context: context.child({
+                  metadata: {
+                    flow: state.name,
+                    node: node.name,
+                    agent: node.agent.name,
+                  },
+                  onEvent: context.onEvent,
+                }),
+                memory: options.memory,
+                threadId: options.threadId,
+              });
+
+              for await (const chunk of stream) {
+                await onTextChunk({
+                  node: node.name,
+                  text: chunk,
+                });
+              }
+
+              const result = await stream.result;
+
+              if (result.status !== "success") {
+                throw result.error;
+              }
+
+              toolTraces.push(...result.toolTraces);
+              messages.push(...result.messages);
+              steps.push(...result.steps);
+              value = result.output;
+            } else {
               const result = await node.agent.run(payload, {
                 context: context.child({
                   metadata: {
@@ -409,18 +444,21 @@ function createRunnableFlow<
               messages.push(...result.messages);
               steps.push(...result.steps);
               value = result.output;
-              steps.push({
-                name: node.name,
-                type: "flow",
-                input: payload,
-                output: value,
-              });
-            } else if (node.kind === "parallel") {
-              const payload = previous === undefined ? originalInput : previous;
-              const entries = Object.entries(node.agents);
-              const runs = await Promise.all(
-                entries.map(async ([key, agent]) => {
-                  const result = await agent.run(payload, {
+            }
+
+            steps.push({
+              name: node.name,
+              type: "flow",
+              input: payload,
+              output: value,
+            });
+          } else if (node.kind === "parallel") {
+            const payload = previous === undefined ? originalInput : previous;
+            const entries = Object.entries(node.agents);
+            const runs = await Promise.all(
+              entries.map(async ([key, agent]) => {
+                if (onTextChunk) {
+                  const stream = agent.stream(payload, {
                     context: context.child({
                       metadata: {
                         flow: state.name,
@@ -434,6 +472,18 @@ function createRunnableFlow<
                     threadId: options.threadId,
                   });
 
+                  const forward = (async () => {
+                    for await (const chunk of stream) {
+                      await onTextChunk({
+                        node: key,
+                        text: chunk,
+                      });
+                    }
+                  })();
+
+                  const result = await stream.result;
+                  await forward;
+
                   if (result.status !== "success") {
                     throw new FlowExecutionError(
                       `Parallel node "${node.name}" failed while running agent "${agent.name}".`,
@@ -446,131 +496,184 @@ function createRunnableFlow<
                   steps.push(...result.steps);
 
                   return [key, result.output] as const;
-                })
-              );
+                }
 
-              value = Object.fromEntries(runs);
-              steps.push({
-                name: node.name,
-                type: "parallel",
-                input: payload,
-                output: value,
-              });
-            } else {
-              const parsedInput = node.process.inputSchema.parse({
-                originalInput,
-                previous,
-                results,
-              });
-              const processContext = context.child({
-                metadata: {
-                  flow: state.name,
-                  node: node.name,
-                  process: node.process.name,
-                },
-              });
-              const rawOutput = await node.process.run({
-                input: parsedInput,
-                ctx: processContext,
-              });
-              value = node.process.outputSchema.parse(rawOutput);
-              steps.push({
-                name: node.name,
-                type: "process",
-                input: parsedInput,
-                output: value,
-              });
-            }
+                const result = await agent.run(payload, {
+                  context: context.child({
+                    metadata: {
+                      flow: state.name,
+                      node: node.name,
+                      agent: agent.name,
+                      parallelKey: key,
+                    },
+                    onEvent: context.onEvent,
+                  }),
+                  memory: options.memory,
+                  threadId: options.threadId,
+                });
 
-            results[node.name] = value;
-            previous = value;
+                if (result.status !== "success") {
+                  throw new FlowExecutionError(
+                    `Parallel node "${node.name}" failed while running agent "${agent.name}".`,
+                    { cause: result.error }
+                  );
+                }
 
-            await context.emit({
-              type: "flow.node.completed",
-              flow: state.name,
-              node: node.name,
-              nodeType: node.kind,
-              output: value,
-            });
-          } catch (error) {
-            const wrapped = new FlowExecutionError(
-              `Flow "${state.name}" failed at node "${node.name}".`,
-              { cause: error }
+                toolTraces.push(...result.toolTraces);
+                messages.push(...result.messages);
+                steps.push(...result.steps);
+
+                return [key, result.output] as const;
+              })
             );
 
+            value = Object.fromEntries(runs);
             steps.push({
               name: node.name,
-              type: node.kind === "parallel" ? "parallel" : node.kind === "process" ? "process" : "flow",
-              input: baseInput,
-              error: wrapped.message,
+              type: "parallel",
+              input: payload,
+              output: value,
             });
-
-            await context.emit({
-              type: "flow.node.failed",
-              flow: state.name,
-              node: node.name,
-              nodeType: node.kind,
-              error: wrapped.message,
+          } else {
+            const parsedInput = node.process.inputSchema.parse({
+              originalInput,
+              previous,
+              results,
             });
-
-            await context.emit({
-              type: "run.completed",
-              name: state.name,
-              status: "failed",
+            const processContext = context.child({
+              metadata: {
+                flow: state.name,
+                node: node.name,
+                process: node.process.name,
+              },
             });
-
-            return {
-              status: "failed",
-              error: wrapped,
-              steps,
-              toolTraces,
-              messages,
-            };
+            const rawOutput = await node.process.run({
+              input: parsedInput,
+              ctx: processContext,
+            });
+            value = node.process.outputSchema.parse(rawOutput);
+            steps.push({
+              name: node.name,
+              type: "process",
+              input: parsedInput,
+              output: value,
+            });
           }
+
+          results[node.name] = value;
+          previous = value;
+
+          await context.emit({
+            type: "flow.node.completed",
+            flow: state.name,
+            node: node.name,
+            nodeType: node.kind,
+            output: value,
+          });
+        } catch (error) {
+          const wrapped = new FlowExecutionError(
+            `Flow "${state.name}" failed at node "${node.name}".`,
+            { cause: error }
+          );
+
+          steps.push({
+            name: node.name,
+            type: node.kind === "parallel" ? "parallel" : node.kind === "process" ? "process" : "flow",
+            input: baseInput,
+            error: wrapped.message,
+          });
+
+          await context.emit({
+            type: "flow.node.failed",
+            flow: state.name,
+            node: node.name,
+            nodeType: node.kind,
+            error: wrapped.message,
+          });
+
+          await context.emit({
+            type: "run.completed",
+            name: state.name,
+            status: "failed",
+          });
+
+          return {
+            status: "failed",
+            error: wrapped,
+            steps,
+            toolTraces,
+            messages,
+          };
         }
-
-        const finalOutput = state.outputSchema.parse(
-          await state.finalizeFn({
-            originalInput,
-            results: results as TResults,
-          })
-        );
-
-        steps.push({
-          name: "finalize",
-          type: "flow",
-          input: results,
-          output: finalOutput,
-        });
-
-        await context.emit({
-          type: "run.completed",
-          name: state.name,
-          status: "success",
-        });
-
-        return {
-          status: "success",
-          output: finalOutput,
-          steps,
-          toolTraces,
-          messages,
-        };
-      } catch (error) {
-        await context.emit({
-          type: "run.completed",
-          name: state.name,
-          status: "failed",
-        });
-
-        return {
-          status: "failed",
-          error: error instanceof Error ? error : new Error(String(error)),
-          steps,
-          toolTraces,
-          messages,
-        };
       }
+
+      const finalOutput = state.outputSchema.parse(
+        await state.finalizeFn({
+          originalInput,
+          results: results as TResults,
+        })
+      );
+
+      steps.push({
+        name: "finalize",
+        type: "flow",
+        input: results,
+        output: finalOutput,
+      });
+
+      await context.emit({
+        type: "run.completed",
+        name: state.name,
+        status: "success",
+      });
+
+      return {
+        status: "success",
+        output: finalOutput,
+        steps,
+        toolTraces,
+        messages,
+      };
+    } catch (error) {
+      await context.emit({
+        type: "run.completed",
+        name: state.name,
+        status: "failed",
+      });
+
+      return {
+        status: "failed",
+        error: error instanceof Error ? error : new Error(String(error)),
+        steps,
+        toolTraces,
+        messages,
+      };
+    }
+  }
+
+  return {
+    name: state.name,
+    inputSchema: state.inputSchema,
+    outputSchema: state.outputSchema,
+    async run(rawInput, options = {}) {
+      return executeFlow(rawInput, options);
+    },
+    stream(rawInput, options = {}) {
+      const queue = createAsyncQueue<FlowTextChunk>();
+      const textStream = queue.stream();
+      const result = executeFlow(rawInput, options, async (chunk) => {
+        queue.push(chunk);
+      }).finally(() => {
+        queue.finish();
+      });
+
+      return {
+        result,
+        textStream,
+        [Symbol.asyncIterator]() {
+          return textStream[Symbol.asyncIterator]();
+        },
+      };
     },
   };
 }
