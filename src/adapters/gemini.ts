@@ -1,4 +1,4 @@
-import { createModelAdapter } from "./shared.js";
+import { createModelAdapter, requireApiKey } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolCall } from "../core/types.js";
 
 interface GeminiFunctionDeclaration {
@@ -210,13 +210,17 @@ export function geminiAdapter(
         throw new Error("No fetch implementation is available for the Gemini adapter.");
       }
 
+      const apiKey = requireApiKey(
+        "Gemini",
+        config.apiKey,
+        "GOOGLE_GENERATIVE_AI_API_KEY"
+      );
+
       const url = new URL(
         `${config.baseUrl ?? "https://generativelanguage.googleapis.com"}/${config.apiVersion ?? "v1beta"}/models/${config.model}:generateContent`
       );
 
-      if (config.apiKey) {
-        url.searchParams.set("key", config.apiKey);
-      }
+      url.searchParams.set("key", apiKey);
 
       const response = await fetchImpl(url, {
         method: "POST",

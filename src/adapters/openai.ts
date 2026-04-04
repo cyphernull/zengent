@@ -1,4 +1,4 @@
-import { createModelAdapter } from "./shared.js";
+import { createModelAdapter, requireApiKey } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor } from "../core/types.js";
 
 interface OpenAIToolCall {
@@ -128,11 +128,13 @@ export function openaiAdapter(
         throw new Error("No fetch implementation is available for the OpenAI adapter.");
       }
 
+      const apiKey = requireApiKey("OpenAI", config.apiKey, "OPENAI_API_KEY");
+
       const requestInit: RequestInit = {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}),
+          authorization: `Bearer ${apiKey}`,
           ...config.headers,
         },
         body: JSON.stringify({

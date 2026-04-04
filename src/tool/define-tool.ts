@@ -1,28 +1,29 @@
+import type { ZodType } from "zod";
+
 import { ValidationError } from "../core/errors.js";
-import type { InferSchema, JsonSchema, RunContext, SchemaLike } from "../core/types.js";
+import type { InferSchema, RunContext, ZodSchema } from "../core/types.js";
 import type { ToolDefinition } from "./tool-types.js";
 
 export interface DefineToolOptions<
   TName extends string,
-  TInputSchema extends SchemaLike,
-  TOutputSchema extends SchemaLike,
+  TInputSchema extends ZodType,
+  TOutputSchema extends ZodType,
 > {
   name: TName;
   description: string;
   inputSchema: TInputSchema;
-  jsonSchema?: JsonSchema;
   outputSchema: TOutputSchema;
   execute(
-    input: TInputSchema extends SchemaLike<infer TInput> ? TInput : never,
+    input: InferSchema<TInputSchema>,
     context: RunContext
-  ): Promise<TOutputSchema extends SchemaLike<infer TOutput> ? TOutput : never>
-    | (TOutputSchema extends SchemaLike<infer TOutput> ? TOutput : never);
+  ): Promise<InferSchema<TOutputSchema>>
+    | InferSchema<TOutputSchema>;
 }
 
 export function defineTool<
   const TName extends string,
-  TInputSchema extends SchemaLike,
-  TOutputSchema extends SchemaLike,
+  TInputSchema extends ZodType,
+  TOutputSchema extends ZodType,
 >(
   options: DefineToolOptions<TName, TInputSchema, TOutputSchema>
 ): ToolDefinition<TInputSchema, InferSchema<TOutputSchema>, TName> {
@@ -32,16 +33,13 @@ export function defineTool<
     name: options.name,
     description: options.description,
     inputSchema: options.inputSchema,
-    jsonSchema: options.jsonSchema,
-    outputSchema: options.outputSchema as SchemaLike<InferSchema<TOutputSchema>>,
+    outputSchema: options.outputSchema as ZodSchema<InferSchema<TOutputSchema>>,
     execute: options.execute,
     async invoke(rawInput, context) {
-      let parsedInput: TInputSchema extends SchemaLike<infer TInput> ? TInput : never;
+      let parsedInput: InferSchema<TInputSchema>;
 
       try {
-        parsedInput = options.inputSchema.parse(rawInput) as TInputSchema extends SchemaLike<infer TInput>
-          ? TInput
-          : never;
+        parsedInput = options.inputSchema.parse(rawInput) as InferSchema<TInputSchema>;
       } catch (error) {
         throw new ValidationError(`Invalid input for tool "${options.name}"`, {
           cause: error,

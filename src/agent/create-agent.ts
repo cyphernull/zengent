@@ -1,7 +1,9 @@
+import type { ZodType } from "zod";
+
 import { createRunContext } from "../core/context.js";
 import type { RunStream, RunResult } from "../core/result.js";
 import { ValidationError } from "../core/errors.js";
-import type { EventHandler, ModelAdapter, RunContext, RunContextOptions, SchemaLike, InferSchema } from "../core/types.js";
+import type { EventHandler, ModelAdapter, RunContext, RunContextOptions, ZodSchema, InferSchema } from "../core/types.js";
 import type { MemoryStore } from "../memory/memory-store.js";
 import type { ToolDefinition } from "../tool/tool-types.js";
 import { executeAgentRun } from "./agent-runner.js";
@@ -18,16 +20,23 @@ export interface AgentRunOptions extends RunContextOptions {
   threadId?: string;
 }
 
+export interface AgentPromptArgs<TInput> {
+  input: TInput;
+}
+
 export interface CreateAgentOptions<
   TName extends string = string,
-  TInputSchema extends SchemaLike = SchemaLike,
-  TOutputSchema extends SchemaLike = SchemaLike,
+  TInputSchema extends ZodType = ZodType,
+  TOutputSchema extends ZodType = ZodType,
   TTools extends readonly ToolDefinition[] = readonly ToolDefinition[],
 > {
   name: TName;
   inputSchema: TInputSchema;
   outputSchema: TOutputSchema;
   instructions?: string;
+  prompt?: (
+    args: AgentPromptArgs<InferSchema<TInputSchema>>
+  ) => string;
   model: ModelAdapter;
   tools?: TTools;
   stopPolicy?: Partial<StopPolicy>;
@@ -43,9 +52,10 @@ export interface Agent<
 > {
   // Reasoning unit used by flows.
   readonly name: TName;
-  readonly inputSchema: SchemaLike<TInput>;
-  readonly outputSchema: SchemaLike<TOutput>;
+  readonly inputSchema: ZodSchema<TInput>;
+  readonly outputSchema: ZodSchema<TOutput>;
   readonly instructions?: string;
+  readonly prompt?: (args: AgentPromptArgs<TInput>) => string;
   readonly model: ModelAdapter;
   readonly tools: TTools;
   run(input: TInput, options?: AgentRunOptions): Promise<RunResult<TOutput>>;
@@ -143,8 +153,8 @@ function buildContext(options?: AgentRunOptions): RunContext {
 
 export function createAgent<
   const TName extends string,
-  TInputSchema extends SchemaLike,
-  TOutputSchema extends SchemaLike,
+  TInputSchema extends ZodType,
+  TOutputSchema extends ZodType,
   const TTools extends readonly ToolDefinition[] = readonly ToolDefinition[],
 >(
   options: CreateAgentOptions<TName, TInputSchema, TOutputSchema, TTools>
@@ -153,9 +163,10 @@ export function createAgent<
 
   return {
     name: options.name,
-    inputSchema: options.inputSchema as SchemaLike<InferSchema<TInputSchema>>,
-    outputSchema: options.outputSchema as SchemaLike<InferSchema<TOutputSchema>>,
+    inputSchema: options.inputSchema as ZodSchema<InferSchema<TInputSchema>>,
+    outputSchema: options.outputSchema as ZodSchema<InferSchema<TOutputSchema>>,
     instructions: options.instructions,
+    prompt: options.prompt,
     model: options.model,
     tools,
     async run(input, runOptions) {
@@ -176,12 +187,13 @@ export function createAgent<
         };
       }
 
-      return executeAgentRun<InferSchema<TOutputSchema>>({
+      return executeAgentRun<InferSchema<TInputSchema>, InferSchema<TOutputSchema>>({
         name: options.name,
         instructions: options.instructions,
+        prompt: options.prompt,
         model: options.model,
         tools,
-        outputSchema: options.outputSchema as SchemaLike<InferSchema<TOutputSchema>>,
+        outputSchema: options.outputSchema as ZodSchema<InferSchema<TOutputSchema>>,
         stopPolicy: options.stopPolicy,
         toolPolicy: options.toolPolicy,
         input: parsedInput,
@@ -222,12 +234,13 @@ export function createAgent<
         };
       }
 
-      const result = executeAgentRun<InferSchema<TOutputSchema>>({
+      const result = executeAgentRun<InferSchema<TInputSchema>, InferSchema<TOutputSchema>>({
         name: options.name,
         instructions: options.instructions,
+        prompt: options.prompt,
         model: options.model,
         tools,
-        outputSchema: options.outputSchema as SchemaLike<InferSchema<TOutputSchema>>,
+        outputSchema: options.outputSchema as ZodSchema<InferSchema<TOutputSchema>>,
         stopPolicy: options.stopPolicy,
         toolPolicy: options.toolPolicy,
         input: parsedInput,

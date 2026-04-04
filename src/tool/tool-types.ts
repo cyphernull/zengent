@@ -1,7 +1,7 @@
-import type { RunContext, SchemaLike, InferSchema, JsonSchema } from "../core/types.js";
+import type { RunContext, ZodSchema, InferSchema } from "../core/types.js";
 
 export interface ToolDefinition<
-  TInputSchema extends SchemaLike = SchemaLike,
+  TInputSchema extends ZodSchema = ZodSchema,
   TOutput = unknown,
   TName extends string = string,
 > {
@@ -9,8 +9,7 @@ export interface ToolDefinition<
   readonly name: TName;
   readonly description: string;
   readonly inputSchema: TInputSchema;
-  readonly jsonSchema?: JsonSchema;
-  readonly outputSchema: SchemaLike<TOutput>;
+  readonly outputSchema: ZodSchema<TOutput>;
   execute(
     input: InferSchema<TInputSchema>,
     context: RunContext

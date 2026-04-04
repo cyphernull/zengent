@@ -12,3 +12,23 @@ export function createModelAdapter(config: {
     generate: config.generate,
   };
 }
+
+export function resolveApiKey(explicitApiKey: string | undefined, envVarName: string) {
+  return explicitApiKey ?? process.env[envVarName];
+}
+
+export function requireApiKey(
+  providerName: string,
+  explicitApiKey: string | undefined,
+  envVarName: string
+) {
+  const apiKey = resolveApiKey(explicitApiKey, envVarName);
+
+  if (!apiKey) {
+    throw new Error(
+      `${providerName} adapter requires an API key. Pass apiKey explicitly or set ${envVarName}.`
+    );
+  }
+
+  return apiKey;
+}

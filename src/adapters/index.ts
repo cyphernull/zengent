@@ -1,4 +1,3 @@
-export * from "./shared.js";
 export * from "./openai.js";
 export * from "./anthropic.js";
 export * from "./gemini.js";
@@ -7,5 +6,3 @@ export * from "./openrouter.js";
 export * from "./deepseek.js";
 export * from "./kimi.js";
 export * from "./ollama.js";
-export * from "./ai-sdk.js";
-export * from "./mcp.js";

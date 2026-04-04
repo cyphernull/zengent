@@ -1,3 +1,5 @@
+import type { ZodType } from "zod";
+
 export interface SchemaLike<T = unknown> {
   parse(value: unknown): T;
 }
@@ -5,6 +7,8 @@ export interface SchemaLike<T = unknown> {
 export type InferSchema<TSchema> = TSchema extends SchemaLike<infer TOutput>
   ? TOutput
   : never;
+
+export type ZodSchema<T = unknown> = ZodType<T>;
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue =

@@ -1,6 +1,6 @@
 {
   "name": "zengent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A lightweight TypeScript-first agent framework for tools, agents, and flows.",
   "license": "MIT",
   "repository": {
@@ -64,13 +64,9 @@
       "types": "./dist/adapters/ollama.d.ts",
       "import": "./dist/adapters/ollama.js"
     },
-    "./adapters/ai-sdk": {
-      "types": "./dist/adapters/ai-sdk.d.ts",
-      "import": "./dist/adapters/ai-sdk.js"
-    },
-    "./adapters/mcp": {
-      "types": "./dist/adapters/mcp.d.ts",
-      "import": "./dist/adapters/mcp.js"
+    "./integrations/mcp": {
+      "types": "./dist/integrations/mcp.d.ts",
+      "import": "./dist/integrations/mcp.js"
     },
     "./testing": {
       "types": "./dist/testing/index.d.ts",

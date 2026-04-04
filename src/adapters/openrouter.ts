@@ -1,4 +1,4 @@
-import { createModelAdapter } from "./shared.js";
+import { createModelAdapter, requireApiKey } from "./shared.js";
 import type { JsonSchema, Message, ModelRequest, ModelResponse, RunContext, ToolDescriptor } from "../core/types.js";
 
 interface OpenRouterFunctionToolCall {
@@ -123,13 +123,15 @@ export function openRouterAdapter(
         throw new Error("No fetch implementation is available for the OpenRouter adapter.");
       }
 
+      const apiKey = requireApiKey("OpenRouter", config.apiKey, "OPENROUTER_API_KEY");
+
       const response = await fetchImpl(
         `${config.baseUrl ?? "https://openrouter.ai/api/v1"}/chat/completions`,
         {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}),
+            authorization: `Bearer ${apiKey}`,
             ...(config.referer ? { "HTTP-Referer": config.referer } : {}),
             ...(config.title ? { "X-Title": config.title } : {}),
             ...config.headers,
